@@ -1,0 +1,34 @@
+name: Generate Pinterest Pins
+
+on:
+  schedule:
+    # Runs every day at 06:00 UTC. Adjust to your timezone as needed.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}   # lets you also trigger it manually from the Actions tab
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate pins
+        env:
+          SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
+        run: python pin_generator.py
+
+      - name: Upload pins as downloadable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pins-${{ github.run_id }}
+          path: output/
+          retention-days: 14
