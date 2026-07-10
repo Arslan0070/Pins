@@ -19,7 +19,8 @@ For each row, builds a pin (2:3 ratio, Pinterest's preferred size):
       text auto-switches black/white for readability ]
     [ same image again ]
     [ small "Arslan" watermark badge, bottom-right corner ]
-and saves it as a PNG in the output folder.
+and saves it as a compressed JPEG in the output folder (small file size,
+no visible quality loss - see JPEG_QUALITY below).
 
 Usage:
     python pin_generator.py
@@ -32,6 +33,10 @@ secrets/vars, or just export them locally):
     IMAGE_COL       - optional. Defaults to "image_url".
     TITLE_COL       - optional. Defaults to "title".
     WATERMARK_TEXT  - optional. Defaults to "Arslan".
+    JPEG_QUALITY    - optional. 1-95. Defaults to 85 (high quality, small file).
+                      Lower = smaller files but more compression artifacts.
+                      85-90 is visually near-identical to the original; below
+                      70 you start to notice it, especially in the gradient band.
 """
 
 import os
@@ -56,6 +61,7 @@ ARTICLE_COL = os.environ.get("ARTICLE_COL", "article_url")
 IMAGE_COL = os.environ.get("IMAGE_COL", "image_url")
 TITLE_COL = os.environ.get("TITLE_COL", "title")
 WATERMARK_TEXT = os.environ.get("WATERMARK_TEXT", "Arslan")
+JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "85"))
 REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -331,12 +337,12 @@ def main():
                 if not image_url or image_url.lower() == "nan":
                     continue
 
-            out_name = f"{i+1:04d}-{slugify(title)}.png"
+            out_name = f"{i+1:04d}-{slugify(title)}.jpg"
             out_path = os.path.join(OUTPUT_DIR, out_name)
 
             img = fetch_image(image_url)
             pin = build_pin(img, title)
-            pin.save(out_path, "PNG")
+            pin.save(out_path, "JPEG", quality=JPEG_QUALITY, optimize=True)
             success += 1
             print(f"[OK]   {out_name}")
         except Exception as e:
