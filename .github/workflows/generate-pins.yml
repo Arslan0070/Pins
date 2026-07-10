@@ -24,6 +24,7 @@ jobs:
       - name: Generate pins
         env:
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
+          ARTICLE_COL: "URL"
         run: python pin_generator.py
 
       - name: Upload pins as downloadable artifact
