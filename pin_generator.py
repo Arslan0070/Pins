@@ -281,8 +281,6 @@ def build_pin(image: Image.Image, title: str) -> Image.Image:
         w = bbox[2] - bbox[0]
         x = (PIN_WIDTH - w) // 2
         draw.text((x, y), line, font=font, fill=text_color)
-        underline_y = y + lh + 8
-        draw.line((x, underline_y, x + w, underline_y), fill=text_color, width=5)
         y += lh + line_gap
 
     canvas = add_watermark(canvas, WATERMARK_TEXT)
