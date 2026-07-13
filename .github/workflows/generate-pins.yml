@@ -39,9 +39,16 @@ jobs:
           git add pins/
           git diff --staged --quiet && echo "No new pins to commit." || (git commit -m "Add pins - $(date -u +'%Y-%m-%d %H:%M UTC')" && git push)
 
-      - name: Upload pins as downloadable artifact (14-day backup)
+      - name: Upload pin images as a separate artifact
         uses: actions/upload-artifact@v4
         with:
           name: pins-${{ github.run_id }}
-          path: pins/
+          path: pins/*.jpg
+          retention-days: 14
+
+      - name: Upload the link list (Excel) as a separate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pin-links-${{ github.run_id }}
+          path: pins/pin_links.xlsx
           retention-days: 14
