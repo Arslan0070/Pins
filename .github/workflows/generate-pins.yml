@@ -6,6 +6,9 @@ on:
     - cron: "0 6 * * *"
   workflow_dispatch: {}   # lets you also trigger it manually from the Actions tab
 
+permissions:
+  contents: write   # needed so the workflow can commit the generated pins back into the repo
+
 jobs:
   generate:
     runs-on: ubuntu-latest
@@ -24,12 +27,21 @@ jobs:
       - name: Generate pins
         env:
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
-          ARTICLE_COL: "URL"
+          ARTICLE_COL: "url"   # your scraper's sheet uses a column named URL - remove this line if you rename it to article_url instead
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SHEET_ID: ${{ secrets.SHEET_ID }}
         run: python pin_generator.py
 
-      - name: Upload pins as downloadable artifact
+      - name: Commit and push pins to the repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pins/
+          git diff --staged --quiet && echo "No new pins to commit." || (git commit -m "Add pins - $(date -u +'%Y-%m-%d %H:%M UTC')" && git push)
+
+      - name: Upload pins as downloadable artifact (14-day backup)
         uses: actions/upload-artifact@v4
         with:
           name: pins-${{ github.run_id }}
-          path: output/
+          path: pins/
           retention-days: 14
