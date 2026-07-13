@@ -27,6 +27,9 @@ pin's public GitHub link back into a "Pin Link" column in your live
 Google Sheet (this part is optional - the script works fine without it,
 it just skips this step).
 
+It also always saves a simple "pin_links.xlsx" file (title + link per
+row) next to the pins themselves - no Google account needed for this part.
+
 Usage:
     python pin_generator.py
 
@@ -39,11 +42,12 @@ secrets/vars, or just export them locally):
     TITLE_COL                 - optional. Defaults to "title".
     WATERMARK_TEXT            - optional. Defaults to "Arslan".
     JPEG_QUALITY              - optional. 1-95. Defaults to 85 (high quality, small file).
-    GOOGLE_SERVICE_ACCOUNT_JSON - optional. The full contents of your service
-                                account's JSON key file, pasted as one secret.
-    SHEET_ID                  - optional. The ID from your sheet's URL
-                                (between /d/ and /edit). Required together
-                                with GOOGLE_SERVICE_ACCOUNT_JSON to write links back.
+    GOOGLE_SERVICE_ACCOUNT_JSON - optional, advanced. The full contents of your service
+                                account's JSON key file, pasted as one secret. Only
+                                needed if you want links written directly into your
+                                live Sheet instead of just using pin_links.xlsx.
+    SHEET_ID                  - optional, advanced. Required together with
+                                GOOGLE_SERVICE_ACCOUNT_JSON to write links back.
     PIN_LINK_COL              - optional. Defaults to "Pin Link".
 """
 
@@ -313,6 +317,46 @@ def build_pin_link(filename: str) -> str:
     return f"https://raw.githubusercontent.com/{GITHUB_REPOSITORY}/{GITHUB_REF_NAME}/{OUTPUT_DIR}/{filename}"
 
 
+def save_links_excel(rows, path):
+    """
+    Saves a simple Excel file listing each row's title + pin link, side by
+    side with the pins themselves - no Google account or credentials needed.
+    `rows` is a list of (title, pin_link) tuples, title/link blank for skipped rows.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Pin Links"
+
+    headers = ["#", "Title", "Pin Link"]
+    ws.append(headers)
+    header_fill = PatternFill(start_color="2B5797", end_color="2B5797", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    for col_num in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_num)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    for idx, (title, link) in enumerate(rows, start=1):
+        ws.append([idx, title, link])
+        if link:
+            cell = ws.cell(row=idx + 1, column=3)
+            cell.hyperlink = link
+            cell.style = "Hyperlink"
+
+    ws.column_dimensions[get_column_letter(1)].width = 6
+    ws.column_dimensions[get_column_letter(2)].width = 80
+    ws.column_dimensions[get_column_letter(3)].width = 70
+    ws.freeze_panes = "A2"
+
+    wb.save(path)
+    return path
+
+
 def write_pin_links_to_sheet(pin_links_in_row_order):
     """
     Writes a 'Pin Link' column back into the live Google Sheet, one value per
@@ -393,13 +437,16 @@ def main():
     print(f"Mode: {mode_name}")
 
     success, failed = 0, 0
-    pin_links_in_row_order = []
+    excel_rows = []  # (title, pin_link) per row, for the Excel export
+    pin_links_in_row_order = []  # link-only, for the optional Sheets write-back
     for i, row in df.iterrows():
         pin_link = ""
+        row_title = ""
         try:
             if use_article_mode:
                 article_url = str(row.get(article_col, "")).strip()
                 if not article_url or article_url.lower() == "nan":
+                    excel_rows.append((row_title, pin_link))
                     pin_links_in_row_order.append(pin_link)
                     continue
                 title, image_url = extract_title_and_image(article_url)
@@ -407,6 +454,7 @@ def main():
                 image_url = str(row.get(image_col, "")).strip()
                 title = str(row.get(title_col, "")).strip()
                 if not image_url or image_url.lower() == "nan":
+                    excel_rows.append((row_title, pin_link))
                     pin_links_in_row_order.append(pin_link)
                     continue
 
@@ -417,15 +465,21 @@ def main():
             pin = build_pin(img, title)
             pin.save(out_path, "JPEG", quality=JPEG_QUALITY, optimize=True)
             pin_link = build_pin_link(out_name)
+            row_title = title
             success += 1
             print(f"[OK]   {out_name}")
         except Exception as e:
             failed += 1
             print(f"[FAIL] row {i+1}: {e}", file=sys.stderr)
 
+        excel_rows.append((row_title, pin_link))
         pin_links_in_row_order.append(pin_link)
 
     print(f"\nDone. {success} pins created, {failed} failed. Output: {OUTPUT_DIR}/")
+
+    excel_path = os.path.join(OUTPUT_DIR, "pin_links.xlsx")
+    save_links_excel(excel_rows, excel_path)
+    print(f"Saved link list to: {excel_path}")
 
     write_pin_links_to_sheet(pin_links_in_row_order)
 
