@@ -28,19 +28,36 @@ This link updates automatically whenever you edit the sheet, needs no login, and
 
 ## 2. Put this project on GitHub
 
-1. Create a new **private** GitHub repo (private is fine and free).
+1. Create a new GitHub repo. **Make it Public** — this is required for the pin links (in the Excel file or the Sheet) to actually open for anyone.
 2. Upload all files in this folder (`pin_generator.py`, `requirements.txt`, `assets/`, `.github/workflows/generate-pins.yml`).
 3. Go to **Settings → Secrets and variables → Actions → New repository secret**:
    - Name: `SHEET_CSV_URL`
    - Value: the CSV link you copied in step 1.
 
-## 3. Let it run
+## 3. Getting each pin's link (the simple way - recommended)
+
+No extra setup needed for this — it just works. Every run automatically creates a file called **`pin_links.xlsx`** inside the `pins/` folder, listing each pin's title and clickable public link, in the same order as your sheet. It shows up in the same downloadable zip as the pin images (see step 5), and also gets committed into your repo alongside them.
+
+## 4. (Optional, advanced) Writing links directly into your live Google Sheet instead
+
+Skip this section unless you specifically want a "Pin Link" column to appear inside your actual Google Sheet, rather than just the Excel file above. This route needs a Google "service account" (a set of credentials that let the script log in and edit your sheet), which is more setup and more places for things to go wrong — the Excel file above gives you the same links with none of that hassle.
+
+If you still want it:
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) → create a project → enable the **Google Sheets API** and **Google Drive API**.
+2. **APIs & Services → Credentials → Create Credentials → Service account** → create it → **Keys** tab → **Add Key → Create new key → JSON**.
+3. Open that JSON file, copy the `client_email` value, then share your Google Sheet with that email as **Editor**.
+4. Copy your Sheet's ID from its URL: `https://docs.google.com/spreadsheets/d/THIS_PART/edit`
+5. In GitHub, add two secrets: `GOOGLE_SERVICE_ACCOUNT_JSON` (paste the entire JSON file contents) and `SHEET_ID` (the ID from step 4).
+
+If this isn't working, don't worry about troubleshooting it — just leave those two secrets unset (or delete them if you already added them). The script detects they're missing and simply skips this step; `pin_links.xlsx` still gets created either way.
+
+## 5. Let it run
 
 - The workflow runs daily at 06:00 UTC automatically (edit the `cron` line in `generate-pins.yml` to change the time — cron times are in UTC).
 - You can also trigger it manually anytime from the **Actions** tab → "Generate Pinterest Pins" → **Run workflow**.
-- When it finishes, open the workflow run → scroll to **Artifacts** → download the zip of that day's ~200 PNGs.
+- Each run commits that day's pins straight into a `pins/` folder in your repo (so the public links work), and also uploads **two separate downloadable artifacts**: one zip with just the pin images, and one with just `pin_links.xlsx` — so you can grab either on its own from the workflow run's **Artifacts** section.
 
-## 4. Running it locally instead (optional)
+## 6. Running it locally instead (optional)
 
 You don't need GitHub at all if you'd rather run it on your own machine:
 
@@ -50,7 +67,7 @@ export SHEET_CSV_URL="https://docs.google.com/spreadsheets/d/e/XXXXX/pub?output=
 python pin_generator.py
 ```
 
-Pins are saved to the `output/` folder. To automate this locally, add it to `cron` (Mac/Linux) or Task Scheduler (Windows) — but your machine needs to be on at that time, which is why GitHub Actions (cloud, free, always-on) is usually easier.
+Pins are saved to the `pins/` folder. To automate this locally, add it to `cron` (Mac/Linux) or Task Scheduler (Windows) — but your machine needs to be on at that time, which is why GitHub Actions (cloud, free, always-on) is usually easier. (Note: the "Pin Link" write-back feature is designed around GitHub-hosted links, so it only makes sense when running through GitHub Actions.)
 
 ## Customizing the design
 
@@ -62,5 +79,7 @@ Open `pin_generator.py` and adjust the constants near the top:
 
 ## Notes
 
-- If a row's image fails to download (bad URL, broken link), that row is skipped and logged — it won't stop the other ~199 pins from generating.
+- If a row's image fails to download (bad URL, broken link), that row is skipped and logged — it won't stop the other pins from generating.
 - Output filenames are numbered by row + a slug of the title, so they sort in sheet order.
+- The "Pin Link" write-back assumes your sheet's rows stay in the same order between runs (don't manually sort/filter the sheet in between) — it matches links back to rows by position, not by content.
+- Committing pins into the repo daily means the repo grows over time (git doesn't delete old commits automatically). At ~200 pins/day this is fine for many months, but eventually you may want to prune old pins or move to a dedicated image host — just let me know if you get there.

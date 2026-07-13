@@ -15,30 +15,43 @@ your sheet's columns:
 
 For each row, builds a pin (2:3 ratio, Pinterest's preferred size):
     [ image ]
-    [ random-colored gradient band with wrapped, underlined title,
+    [ random-colored gradient band with wrapped title,
       text auto-switches black/white for readability ]
     [ same image again ]
     [ small "Arslan" watermark badge, bottom-right corner ]
 and saves it as a compressed JPEG in the output folder (small file size,
 no visible quality loss - see JPEG_QUALITY below).
 
+If GOOGLE_SERVICE_ACCOUNT_JSON and SHEET_ID are set, it also writes each
+pin's public GitHub link back into a "Pin Link" column in your live
+Google Sheet (this part is optional - the script works fine without it,
+it just skips this step).
+
+It also always saves a simple "pin_links.xlsx" file (title + link per
+row) next to the pins themselves - no Google account needed for this part.
+
 Usage:
     python pin_generator.py
 
 Config is controlled via environment variables (set as GitHub Actions
 secrets/vars, or just export them locally):
-    SHEET_CSV_URL   - required. The published CSV link from your Google Sheet.
-    OUTPUT_DIR      - optional. Defaults to "output".
-    ARTICLE_COL     - optional. Defaults to "article_url".
-    IMAGE_COL       - optional. Defaults to "image_url".
-    TITLE_COL       - optional. Defaults to "title".
-    WATERMARK_TEXT  - optional. Defaults to "Arslan".
-    JPEG_QUALITY    - optional. 1-95. Defaults to 85 (high quality, small file).
-                      Lower = smaller files but more compression artifacts.
-                      85-90 is visually near-identical to the original; below
-                      70 you start to notice it, especially in the gradient band.
+    SHEET_CSV_URL             - required. The published CSV link from your Google Sheet.
+    OUTPUT_DIR                - optional. Defaults to "pins".
+    ARTICLE_COL               - optional. Defaults to "article_url".
+    IMAGE_COL                 - optional. Defaults to "image_url".
+    TITLE_COL                 - optional. Defaults to "title".
+    WATERMARK_TEXT            - optional. Defaults to "Arslan".
+    JPEG_QUALITY              - optional. 1-95. Defaults to 85 (high quality, small file).
+    GOOGLE_SERVICE_ACCOUNT_JSON - optional, advanced. The full contents of your service
+                                account's JSON key file, pasted as one secret. Only
+                                needed if you want links written directly into your
+                                live Sheet instead of just using pin_links.xlsx.
+    SHEET_ID                  - optional, advanced. Required together with
+                                GOOGLE_SERVICE_ACCOUNT_JSON to write links back.
+    PIN_LINK_COL              - optional. Defaults to "Pin Link".
 """
 
+import json
 import os
 import random
 import re
@@ -56,12 +69,22 @@ from PIL import Image, ImageDraw, ImageFont
 # Config
 # ---------------------------------------------------------------------------
 SHEET_CSV_URL = os.environ.get("SHEET_CSV_URL", "").strip()
-OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "output")
+OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "pins")
 ARTICLE_COL = os.environ.get("ARTICLE_COL", "article_url")
 IMAGE_COL = os.environ.get("IMAGE_COL", "image_url")
 TITLE_COL = os.environ.get("TITLE_COL", "title")
 WATERMARK_TEXT = os.environ.get("WATERMARK_TEXT", "Arslan")
 JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "85"))
+
+# Optional: write pin links back into the Google Sheet
+GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
+SHEET_ID = os.environ.get("SHEET_ID", "").strip()
+PIN_LINK_COL = os.environ.get("PIN_LINK_COL", "Pin Link")
+
+# Set automatically by GitHub Actions - used to build each pin's public raw link
+GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY", "").strip()   # e.g. "Arslan0070/PinterestPins"
+GITHUB_REF_NAME = os.environ.get("GITHUB_REF_NAME", "main").strip()   # e.g. "main"
+
 REQUEST_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -287,6 +310,98 @@ def build_pin(image: Image.Image, title: str) -> Image.Image:
     return canvas
 
 
+def build_pin_link(filename: str) -> str:
+    """Public raw GitHub URL for a pin file, once it's committed into the repo (requires a public repo)."""
+    if not GITHUB_REPOSITORY:
+        return ""
+    return f"https://raw.githubusercontent.com/{GITHUB_REPOSITORY}/{GITHUB_REF_NAME}/{OUTPUT_DIR}/{filename}"
+
+
+def save_links_excel(rows, path):
+    """
+    Saves a simple Excel file listing each row's title + pin link, side by
+    side with the pins themselves - no Google account or credentials needed.
+    `rows` is a list of (title, pin_link) tuples, title/link blank for skipped rows.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Pin Links"
+
+    headers = ["#", "Title", "Pin Link"]
+    ws.append(headers)
+    header_fill = PatternFill(start_color="2B5797", end_color="2B5797", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    for col_num in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_num)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    for idx, (title, link) in enumerate(rows, start=1):
+        ws.append([idx, title, link])
+        if link:
+            cell = ws.cell(row=idx + 1, column=3)
+            cell.hyperlink = link
+            cell.style = "Hyperlink"
+
+    ws.column_dimensions[get_column_letter(1)].width = 6
+    ws.column_dimensions[get_column_letter(2)].width = 80
+    ws.column_dimensions[get_column_letter(3)].width = 70
+    ws.freeze_panes = "A2"
+
+    wb.save(path)
+    return path
+
+
+def write_pin_links_to_sheet(pin_links_in_row_order):
+    """
+    Writes a 'Pin Link' column back into the live Google Sheet, one value per
+    data row, in the same order the rows were read. Skipped/failed rows get
+    a blank cell. Does nothing (safely) if Sheets credentials aren't configured.
+    """
+    if not GOOGLE_SERVICE_ACCOUNT_JSON or not SHEET_ID:
+        print("Skipping sheet write-back (GOOGLE_SERVICE_ACCOUNT_JSON / SHEET_ID not set).")
+        return
+
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+    except ImportError:
+        print("Missing packages for Sheets write-back. Install with: pip install gspread google-auth", file=sys.stderr)
+        return
+
+    try:
+        creds_info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+        creds = Credentials.from_service_account_info(
+            creds_info,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"],
+        )
+        client = gspread.authorize(creds)
+        ws = client.open_by_key(SHEET_ID).sheet1
+
+        headers = ws.row_values(1)
+        headers_lower = [h.strip().lower() for h in headers]
+        if PIN_LINK_COL.lower() in headers_lower:
+            col_index = headers_lower.index(PIN_LINK_COL.lower()) + 1
+        else:
+            col_index = len(headers) + 1
+            ws.update_cell(1, col_index, PIN_LINK_COL)
+
+        col_letter = gspread.utils.rowcol_to_a1(1, col_index).rstrip("0123456789")
+        start_row, end_row = 2, len(pin_links_in_row_order) + 1
+        range_name = f"{col_letter}{start_row}:{col_letter}{end_row}"
+        values = [[link] for link in pin_links_in_row_order]
+
+        ws.update(range_name=range_name, values=values)
+        print(f"Wrote {len(values)} pin link(s) back into the '{PIN_LINK_COL}' column of your Sheet.")
+    except Exception as e:
+        print(f"Could not write pin links back to the Sheet: {e}", file=sys.stderr)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -322,17 +437,25 @@ def main():
     print(f"Mode: {mode_name}")
 
     success, failed = 0, 0
+    excel_rows = []  # (title, pin_link) per row, for the Excel export
+    pin_links_in_row_order = []  # link-only, for the optional Sheets write-back
     for i, row in df.iterrows():
+        pin_link = ""
+        row_title = ""
         try:
             if use_article_mode:
                 article_url = str(row.get(article_col, "")).strip()
                 if not article_url or article_url.lower() == "nan":
+                    excel_rows.append((row_title, pin_link))
+                    pin_links_in_row_order.append(pin_link)
                     continue
                 title, image_url = extract_title_and_image(article_url)
             else:
                 image_url = str(row.get(image_col, "")).strip()
                 title = str(row.get(title_col, "")).strip()
                 if not image_url or image_url.lower() == "nan":
+                    excel_rows.append((row_title, pin_link))
+                    pin_links_in_row_order.append(pin_link)
                     continue
 
             out_name = f"{i+1:04d}-{slugify(title)}.jpg"
@@ -341,13 +464,24 @@ def main():
             img = fetch_image(image_url)
             pin = build_pin(img, title)
             pin.save(out_path, "JPEG", quality=JPEG_QUALITY, optimize=True)
+            pin_link = build_pin_link(out_name)
+            row_title = title
             success += 1
             print(f"[OK]   {out_name}")
         except Exception as e:
             failed += 1
             print(f"[FAIL] row {i+1}: {e}", file=sys.stderr)
 
+        excel_rows.append((row_title, pin_link))
+        pin_links_in_row_order.append(pin_link)
+
     print(f"\nDone. {success} pins created, {failed} failed. Output: {OUTPUT_DIR}/")
+
+    excel_path = os.path.join(OUTPUT_DIR, "pin_links.xlsx")
+    save_links_excel(excel_rows, excel_path)
+    print(f"Saved link list to: {excel_path}")
+
+    write_pin_links_to_sheet(pin_links_in_row_order)
 
 
 if __name__ == "__main__":
