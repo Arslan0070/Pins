@@ -46,9 +46,9 @@ jobs:
           path: pins/*.jpg
           retention-days: 14
 
-      - name: Upload the link list (Excel) as a separate artifact
+      - name: Upload the Pinterest bulk-upload CSV as a separate artifact
         uses: actions/upload-artifact@v4
         with:
           name: pin-links-${{ github.run_id }}
-          path: pins/pin_links.xlsx
+          path: pins/pinterest_bulk_upload.csv
           retention-days: 14
