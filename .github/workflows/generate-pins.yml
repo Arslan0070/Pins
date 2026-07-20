@@ -1,10 +1,7 @@
 name: Generate Pinterest Pins
 
 on:
-  schedule:
-    # Runs every day at 06:00 UTC. Adjust to your timezone as needed.
-    - cron: "0 6 * * *"
-  workflow_dispatch: {}   # lets you also trigger it manually from the Actions tab
+  workflow_dispatch: {}   # only runs when you click "Run workflow" in the Actions tab
 
 permissions:
   contents: write   # needed so the workflow can commit the generated pins back into the repo
@@ -46,9 +43,9 @@ jobs:
           path: pins/*.jpg
           retention-days: 14
 
-      - name: Upload the link list (Excel) as a separate artifact
+      - name: Upload the Pinterest bulk-upload CSV(s) as a separate artifact
         uses: actions/upload-artifact@v4
         with:
           name: pin-links-${{ github.run_id }}
-          path: pins/pin_links.xlsx
+          path: pins/pinterest_bulk_upload*.csv
           retention-days: 14
