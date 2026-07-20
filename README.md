@@ -36,7 +36,13 @@ This link updates automatically whenever you edit the sheet, needs no login, and
 
 ## 3. Getting each pin's link (the simple way - recommended)
 
-No extra setup needed for this — it just works. Every run automatically creates a file called **`pin_links.xlsx`** inside the `pins/` folder, listing each pin's title and clickable public link, in the same order as your sheet. It shows up in the same downloadable zip as the pin images (see step 5), and also gets committed into your repo alongside them.
+No extra setup needed for this — it just works. Every run automatically creates **`pinterest_bulk_upload.csv`** inside the `pins/` folder, formatted exactly for Pinterest's own bulk-upload tool: Title, Media URL, Pinterest board, Thumbnail, Description, Link, Publish date, Keywords.
+
+- **Link** is the original article URL with `?utm_source=arslan&utm_medium=social&utm_campaign=arslan` automatically appended (change these via the `UTM_SOURCE` / `UTM_MEDIUM` / `UTM_CAMPAIGN` variables if you want).
+- **Publish date** is filled in automatically: starting tomorrow, 10 pins per day, moving to the next day after every 10 rows. If a particular pin fails to generate, its row still gets a date (so the schedule never skips a day or shifts) — it just has blank Title/Media URL since there's nothing to upload for that one.
+- **Pinterest board** defaults to `"Boredpanda Viral"` — change it with the `PINTEREST_BOARD` variable if you use a different board name.
+
+It shows up in the same downloadable zip as the pin images (see step 5), and also gets committed into your repo alongside them.
 
 ## 4. (Optional, advanced) Writing links directly into your live Google Sheet instead
 
@@ -49,13 +55,13 @@ If you still want it:
 4. Copy your Sheet's ID from its URL: `https://docs.google.com/spreadsheets/d/THIS_PART/edit`
 5. In GitHub, add two secrets: `GOOGLE_SERVICE_ACCOUNT_JSON` (paste the entire JSON file contents) and `SHEET_ID` (the ID from step 4).
 
-If this isn't working, don't worry about troubleshooting it — just leave those two secrets unset (or delete them if you already added them). The script detects they're missing and simply skips this step; `pin_links.xlsx` still gets created either way.
+If this isn't working, don't worry about troubleshooting it — just leave those two secrets unset (or delete them if you already added them). The script detects they're missing and simply skips this step; `pinterest_bulk_upload.csv` still gets created either way.
 
 ## 5. Let it run
 
 - The workflow runs daily at 06:00 UTC automatically (edit the `cron` line in `generate-pins.yml` to change the time — cron times are in UTC).
 - You can also trigger it manually anytime from the **Actions** tab → "Generate Pinterest Pins" → **Run workflow**.
-- Each run commits that day's pins straight into a `pins/` folder in your repo (so the public links work), and also uploads **two separate downloadable artifacts**: one zip with just the pin images, and one with just `pin_links.xlsx` — so you can grab either on its own from the workflow run's **Artifacts** section.
+- Each run commits that day's pins straight into a `pins/` folder in your repo (so the public links work), and also uploads **two separate downloadable artifacts**: one zip with just the pin images, and one with just `pinterest_bulk_upload.csv` — so you can grab either on its own from the workflow run's **Artifacts** section.
 
 ## 6. Running it locally instead (optional)
 
