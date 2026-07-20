@@ -34,6 +34,11 @@ Publish dates are auto-assigned: starting tomorrow, 10 pins per day,
 moving to the next day every 10 rows - continuing even through rows
 where the pin failed, so the schedule never has a gap.
 
+If there are more than CSV_CHUNK_SIZE rows (default 100), the CSV is
+split into multiple files (pinterest_bulk_upload_part1.csv, _part2.csv,
+...) - each one's publish dates restart fresh from "tomorrow" again,
+rather than continuing on from the previous file.
+
 Usage:
     python pin_generator.py
 
@@ -53,6 +58,7 @@ secrets/vars, or just export them locally):
     UTM_CAMPAIGN              - optional. Defaults to "arslan".
     PUBLISH_START_OFFSET_DAYS - optional. Defaults to 1 (schedule starts tomorrow).
     PUBLISH_GROUP_SIZE        - optional. Defaults to 10 (pins per day before the date advances).
+    CSV_CHUNK_SIZE            - optional. Defaults to 100 (max rows per CSV file before splitting).
     GOOGLE_SERVICE_ACCOUNT_JSON - optional, advanced. The full contents of your service
                                 account's JSON key file, pasted as one secret. Only
                                 needed if you want links written directly into your
@@ -98,6 +104,8 @@ UTM_MEDIUM = os.environ.get("UTM_MEDIUM", "social")
 UTM_CAMPAIGN = os.environ.get("UTM_CAMPAIGN", "arslan")
 PUBLISH_START_OFFSET_DAYS = int(os.environ.get("PUBLISH_START_OFFSET_DAYS", "1"))
 PUBLISH_GROUP_SIZE = int(os.environ.get("PUBLISH_GROUP_SIZE", "10"))
+CSV_CHUNK_SIZE = int(os.environ.get("CSV_CHUNK_SIZE", "100"))
+MAX_ROWS_PER_CSV = int(os.environ.get("MAX_ROWS_PER_CSV", "100"))
 
 # Optional: write pin links back into the Google Sheet
 GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
@@ -515,9 +523,20 @@ def main():
 
     print(f"\nDone. {success} pins created, {failed} failed. Output: {OUTPUT_DIR}/")
 
-    csv_path = os.path.join(OUTPUT_DIR, "pinterest_bulk_upload.csv")
-    save_pinterest_bulk_csv(pinterest_rows, csv_path)
-    print(f"Saved Pinterest bulk-upload CSV to: {csv_path}")
+    if pinterest_rows:
+        chunks = [pinterest_rows[i:i + CSV_CHUNK_SIZE] for i in range(0, len(pinterest_rows), CSV_CHUNK_SIZE)]
+    else:
+        chunks = []
+
+    if len(chunks) <= 1:
+        csv_path = os.path.join(OUTPUT_DIR, "pinterest_bulk_upload.csv")
+        save_pinterest_bulk_csv(pinterest_rows, csv_path)
+        print(f"Saved Pinterest bulk-upload CSV to: {csv_path}")
+    else:
+        for part_num, chunk in enumerate(chunks, start=1):
+            csv_path = os.path.join(OUTPUT_DIR, f"pinterest_bulk_upload_part{part_num}.csv")
+            save_pinterest_bulk_csv(chunk, csv_path)  # dates restart fresh for each file
+            print(f"Saved Pinterest bulk-upload CSV part {part_num} ({len(chunk)} rows) to: {csv_path}")
 
     write_pin_links_to_sheet(pin_links_in_row_order)
 
