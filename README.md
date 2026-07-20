@@ -41,6 +41,7 @@ No extra setup needed for this — it just works. Every run automatically create
 - **Link** is the original article URL with `?utm_source=arslan&utm_medium=social&utm_campaign=arslan` automatically appended (change these via the `UTM_SOURCE` / `UTM_MEDIUM` / `UTM_CAMPAIGN` variables if you want).
 - **Publish date** is filled in automatically: starting tomorrow, 10 pins per day, moving to the next day after every 10 rows. If a particular pin fails to generate, its row still gets a date (so the schedule never skips a day or shifts) — it just has blank Title/Media URL since there's nothing to upload for that one.
 - **Pinterest board** defaults to `"Boredpanda Viral"` — change it with the `PINTEREST_BOARD` variable if you use a different board name.
+- **File splitting**: if there are more than 100 pins in a run, the CSV automatically splits into multiple files — `pinterest_bulk_upload_part1.csv`, `_part2.csv`, and so on (100 rows each). Each file's publish dates restart fresh from "tomorrow" — they don't continue on from the previous file. Change the 100 cutoff with the `CSV_CHUNK_SIZE` variable if needed.
 
 It shows up in the same downloadable zip as the pin images (see step 5), and also gets committed into your repo alongside them.
 
