@@ -30,9 +30,12 @@ it just skips this step).
 It also always saves "pinterest_bulk_upload.csv" next to the pins -
 formatted exactly for Pinterest's bulk-upload tool (Title, Media URL,
 Pinterest board, Thumbnail, Description, Link, Publish date, Keywords).
-Publish dates are auto-assigned: starting tomorrow, 10 pins per day,
-moving to the next day every 10 rows - continuing even through rows
-where the pin failed, so the schedule never has a gap.
+
+Two things are asked before it starts (typed prompt if you run this
+locally with `python pin_generator.py`; shown as fillable fields on
+GitHub's "Run workflow" button if run through Actions):
+  - how many pins per day (controls the Publish date grouping)
+  - what UTM parameters to append to each article link
 
 If there are more than CSV_CHUNK_SIZE rows (default 100), the CSV is
 split into multiple files (pinterest_bulk_upload_part1.csv, _part2.csv,
@@ -43,7 +46,8 @@ Usage:
     python pin_generator.py
 
 Config is controlled via environment variables (set as GitHub Actions
-secrets/vars, or just export them locally):
+secrets/vars or workflow inputs, or just export them locally). Leave
+PINS_PER_DAY / UTM_QUERY unset to be prompted for them instead:
     SHEET_CSV_URL             - required. The published CSV link from your Google Sheet.
     OUTPUT_DIR                - optional. Defaults to "pins".
     ARTICLE_COL               - optional. Defaults to "article_url".
@@ -53,11 +57,11 @@ secrets/vars, or just export them locally):
     JPEG_QUALITY              - optional. 1-95. Defaults to 85 (high quality, small file).
     PINTEREST_BOARD           - optional. Defaults to "Boredpanda Viral".
     PINTEREST_THUMBNAIL       - optional. Defaults to "0:00" (matches Pinterest's template).
-    UTM_SOURCE                - optional. Defaults to "arslan".
-    UTM_MEDIUM                - optional. Defaults to "social".
-    UTM_CAMPAIGN              - optional. Defaults to "arslan".
+    PINS_PER_DAY              - optional. If unset, you'll be prompted (default if not interactive: 10).
+    UTM_QUERY                 - optional. If unset, you'll be prompted. Set to an empty
+                                value to add no UTM parameters at all.
+                                Default: "utm_source=arslan&utm_medium=social&utm_campaign=arslan"
     PUBLISH_START_OFFSET_DAYS - optional. Defaults to 1 (schedule starts tomorrow).
-    PUBLISH_GROUP_SIZE        - optional. Defaults to 10 (pins per day before the date advances).
     CSV_CHUNK_SIZE            - optional. Defaults to 100 (max rows per CSV file before splitting).
     GOOGLE_SERVICE_ACCOUNT_JSON - optional, advanced. The full contents of your service
                                 account's JSON key file, pasted as one secret. Only
@@ -99,13 +103,10 @@ JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "85"))
 # Pinterest bulk-upload CSV formatting
 PINTEREST_BOARD = os.environ.get("PINTEREST_BOARD", "Boredpanda Viral")
 PINTEREST_THUMBNAIL = os.environ.get("PINTEREST_THUMBNAIL", "0:00")
-UTM_SOURCE = os.environ.get("UTM_SOURCE", "arslan")
-UTM_MEDIUM = os.environ.get("UTM_MEDIUM", "social")
-UTM_CAMPAIGN = os.environ.get("UTM_CAMPAIGN", "arslan")
+DEFAULT_UTM_QUERY = "utm_source=arslan&utm_medium=social&utm_campaign=arslan"
+DEFAULT_PINS_PER_DAY = 10
 PUBLISH_START_OFFSET_DAYS = int(os.environ.get("PUBLISH_START_OFFSET_DAYS", "1"))
-PUBLISH_GROUP_SIZE = int(os.environ.get("PUBLISH_GROUP_SIZE", "10"))
 CSV_CHUNK_SIZE = int(os.environ.get("CSV_CHUNK_SIZE", "100"))
-MAX_ROWS_PER_CSV = int(os.environ.get("MAX_ROWS_PER_CSV", "100"))
 
 # Optional: write pin links back into the Google Sheet
 GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip()
@@ -341,6 +342,52 @@ def build_pin(image: Image.Image, title: str) -> Image.Image:
     return canvas
 
 
+def get_pins_per_day() -> int:
+    """
+    How many pins per day for the Publish date grouping. Priority:
+    1) PINS_PER_DAY env var / workflow input, if set
+    2) an interactive typed prompt, if running in a real terminal (local run)
+    3) the default (10)
+    """
+    env_val = os.environ.get("PINS_PER_DAY", "").strip()
+    if env_val:
+        try:
+            n = int(env_val)
+            if n > 0:
+                return n
+        except ValueError:
+            pass
+        print(f"Invalid PINS_PER_DAY '{env_val}', using default {DEFAULT_PINS_PER_DAY}.", file=sys.stderr)
+        return DEFAULT_PINS_PER_DAY
+
+    if sys.stdin.isatty():
+        raw = input(f"How many pins do you want to upload per day? [{DEFAULT_PINS_PER_DAY}]: ").strip()
+        if raw.isdigit() and int(raw) > 0:
+            return int(raw)
+        return DEFAULT_PINS_PER_DAY
+
+    return DEFAULT_PINS_PER_DAY
+
+
+def get_utm_query() -> str:
+    """
+    The UTM query string appended to each article link (without the
+    leading '?'), e.g. "utm_source=arslan&utm_medium=social&utm_campaign=arslan".
+    Priority:
+    1) UTM_QUERY env var / workflow input, if set (an empty value means "no UTM at all")
+    2) an interactive typed prompt, if running in a real terminal (local run)
+    3) the default
+    """
+    if "UTM_QUERY" in os.environ:
+        return os.environ["UTM_QUERY"].strip().lstrip("?")
+
+    if sys.stdin.isatty():
+        raw = input(f"UTM parameters to append to each article link? [{DEFAULT_UTM_QUERY}]: ").strip()
+        return raw.lstrip("?") if raw else DEFAULT_UTM_QUERY
+
+    return DEFAULT_UTM_QUERY
+
+
 def build_pin_link(filename: str) -> str:
     """Public raw GitHub URL for a pin file, once it's committed into the repo (requires a public repo)."""
     if not GITHUB_REPOSITORY:
@@ -348,38 +395,38 @@ def build_pin_link(filename: str) -> str:
     return f"https://raw.githubusercontent.com/{GITHUB_REPOSITORY}/{GITHUB_REF_NAME}/{OUTPUT_DIR}/{filename}"
 
 
-def add_utm_params(url: str, source: str = UTM_SOURCE, medium: str = UTM_MEDIUM, campaign: str = UTM_CAMPAIGN) -> str:
-    """Appends utm_source/utm_medium/utm_campaign to a URL without breaking any existing query params."""
-    if not url:
+def add_utm_params(url: str, utm_query: str) -> str:
+    """Appends the given UTM query string to a URL without breaking any existing query params."""
+    if not url or not utm_query:
         return url
     parts = urlparse(url)
     query = dict(parse_qsl(parts.query))
-    query.update({"utm_source": source, "utm_medium": medium, "utm_campaign": campaign})
+    query.update(parse_qsl(utm_query))
     return urlunparse(parts._replace(query=urlencode(query)))
 
 
-def build_publish_dates(count: int):
+def build_publish_dates(count: int, pins_per_day: int):
     """
     One date string per row, in Pinterest's DD/MM/YYYY format. Starts
     PUBLISH_START_OFFSET_DAYS days from today, and advances by one day
-    every PUBLISH_GROUP_SIZE rows - counting every row (even ones whose
-    pin failed), so the schedule never skips or leaves a gap.
+    every `pins_per_day` rows - counting every row (even ones whose pin
+    failed), so the schedule never skips or leaves a gap.
     """
     start = date.today() + timedelta(days=PUBLISH_START_OFFSET_DAYS)
     dates = []
     for i in range(count):
-        day_offset = i // PUBLISH_GROUP_SIZE
+        day_offset = i // pins_per_day
         dates.append((start + timedelta(days=day_offset)).strftime("%d/%m/%Y"))
     return dates
 
 
-def save_pinterest_bulk_csv(rows, path):
+def save_pinterest_bulk_csv(rows, path, pins_per_day: int):
     """
     rows: list of dicts with keys "title", "media_url", "link" - one per
     attempted row (title/media_url blank if that row's pin failed).
     Writes a CSV ready to import into Pinterest's bulk-upload tool.
     """
-    dates = build_publish_dates(len(rows))
+    dates = build_publish_dates(len(rows), pins_per_day)
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["Title", "Media URL", "Pinterest board", "Thumbnail", "Description", "Link", "Publish date", "Keywords"])
@@ -452,6 +499,11 @@ def main():
         print("Publish your Google Sheet as CSV (File > Share > Publish to web) and set that URL.", file=sys.stderr)
         sys.exit(1)
 
+    pins_per_day = get_pins_per_day()
+    utm_query = get_utm_query()
+    print(f"Pins per day: {pins_per_day}")
+    print(f"UTM parameters: {utm_query or '(none)'}")
+
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     print(f"Fetching sheet: {SHEET_CSV_URL}")
@@ -490,7 +542,7 @@ def main():
             if not article_url or article_url.lower() == "nan":
                 pin_links_in_row_order.append(pin_link)
                 continue  # nothing in this row at all - skip entirely, don't count it
-            row_article_link = add_utm_params(article_url)
+            row_article_link = add_utm_params(article_url, utm_query)
         else:
             image_url = str(row.get(image_col, "")).strip()
             title_value = str(row.get(title_col, "")).strip()
@@ -530,12 +582,12 @@ def main():
 
     if len(chunks) <= 1:
         csv_path = os.path.join(OUTPUT_DIR, "pinterest_bulk_upload.csv")
-        save_pinterest_bulk_csv(pinterest_rows, csv_path)
+        save_pinterest_bulk_csv(pinterest_rows, csv_path, pins_per_day)
         print(f"Saved Pinterest bulk-upload CSV to: {csv_path}")
     else:
         for part_num, chunk in enumerate(chunks, start=1):
             csv_path = os.path.join(OUTPUT_DIR, f"pinterest_bulk_upload_part{part_num}.csv")
-            save_pinterest_bulk_csv(chunk, csv_path)  # dates restart fresh for each file
+            save_pinterest_bulk_csv(chunk, csv_path, pins_per_day)  # dates restart fresh for each file
             print(f"Saved Pinterest bulk-upload CSV part {part_num} ({len(chunk)} rows) to: {csv_path}")
 
     write_pin_links_to_sheet(pin_links_in_row_order)
