@@ -1,7 +1,16 @@
 name: Generate Pinterest Pins
 
 on:
-  workflow_dispatch: {}   # only runs when you click "Run workflow" in the Actions tab
+  workflow_dispatch:      # only runs when you click "Run workflow" in the Actions tab
+    inputs:
+      pins_per_day:
+        description: "How many pins per day (Publish date groups by this many rows)"
+        required: false
+        default: "10"
+      utm_query:
+        description: "UTM parameters to append to each article link (no leading ?). Leave blank for no UTM at all."
+        required: false
+        default: "utm_source=arslan&utm_medium=social&utm_campaign=arslan"
 
 permissions:
   contents: write   # needed so the workflow can commit the generated pins back into the repo
@@ -27,6 +36,8 @@ jobs:
           ARTICLE_COL: "url"   # your scraper's sheet uses a column named URL - remove this line if you rename it to article_url instead
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SHEET_ID: ${{ secrets.SHEET_ID }}
+          PINS_PER_DAY: ${{ inputs.pins_per_day }}
+          UTM_QUERY: ${{ inputs.utm_query }}
         run: python pin_generator.py
 
       - name: Commit and push pins to the repo
