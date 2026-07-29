@@ -71,7 +71,8 @@ If this isn't working, don't worry about troubleshooting it — just leave those
 
 - The workflow runs daily at 06:00 UTC automatically (edit the `cron` line in `generate-pins.yml` to change the time — cron times are in UTC).
 - You can also trigger it manually anytime from the **Actions** tab → "Generate Pinterest Pins" → **Run workflow**.
-- Each run commits that day's pins straight into a `pins/` folder in your repo (so the public links work), and also uploads **two separate downloadable artifacts**: one zip with just the pin images, and one with just `pinterest_bulk_upload.csv` — so you can grab either on its own from the workflow run's **Artifacts** section.
+- Each run commits that day's pins straight into a `pins/` folder in your repo (so the public links work) — this folder is **permanent and cumulative**: nothing already in it ever gets deleted or overwritten by a later run, since old Media URLs may still be referenced by pins you've already scheduled in Pinterest.
+- The download side is separate: each run also uploads **two artifacts containing only that run's fresh output** (not the accumulated history) — one zip with just this run's pin images, one with just this run's `pinterest_bulk_upload.csv` — grab either from the workflow run's **Artifacts** section.
 
 ## 6. Running it locally instead (optional)
 
