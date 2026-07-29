@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Clear this run's temporary download folder (does NOT touch pins/ - nothing hosted is ever deleted)
+        run: rm -rf latest_run && mkdir -p latest_run
+
       - name: Generate pins
         env:
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
@@ -47,16 +50,16 @@ jobs:
           git add pins/
           git diff --staged --quiet && echo "No new pins to commit." || (git commit -m "Add pins - $(date -u +'%Y-%m-%d %H:%M UTC')" && git push)
 
-      - name: Upload pin images as a separate artifact
+      - name: Upload THIS RUN's pin images as a separate artifact
         uses: actions/upload-artifact@v4
         with:
           name: pins-${{ github.run_id }}
-          path: pins/*.jpg
+          path: latest_run/*.jpg
           retention-days: 14
 
-      - name: Upload the Pinterest bulk-upload CSV(s) as a separate artifact
+      - name: Upload THIS RUN's Pinterest bulk-upload CSV(s) as a separate artifact
         uses: actions/upload-artifact@v4
         with:
           name: pin-links-${{ github.run_id }}
-          path: pins/pinterest_bulk_upload*.csv
+          path: latest_run/pinterest_bulk_upload*.csv
           retention-days: 14

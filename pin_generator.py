@@ -77,6 +77,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import unicodedata
 from datetime import date, timedelta
@@ -94,6 +95,7 @@ from PIL import Image, ImageDraw, ImageFont
 # ---------------------------------------------------------------------------
 SHEET_CSV_URL = os.environ.get("SHEET_CSV_URL", "").strip()
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "pins")
+LATEST_RUN_DIR = os.environ.get("LATEST_RUN_DIR", "latest_run")
 ARTICLE_COL = os.environ.get("ARTICLE_COL", "article_url")
 IMAGE_COL = os.environ.get("IMAGE_COL", "image_url")
 TITLE_COL = os.environ.get("TITLE_COL", "title")
@@ -505,6 +507,7 @@ def main():
     print(f"UTM parameters: {utm_query or '(none)'}")
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(LATEST_RUN_DIR, exist_ok=True)
 
     print(f"Fetching sheet: {SHEET_CSV_URL}")
     df = pd.read_csv(SHEET_CSV_URL)
@@ -562,6 +565,7 @@ def main():
             img = fetch_image(image_url)
             pin = build_pin(img, title)
             pin.save(out_path, "JPEG", quality=JPEG_QUALITY, optimize=True)
+            shutil.copy2(out_path, os.path.join(LATEST_RUN_DIR, out_name))  # copy for this run's download only - pins/ (permanent hosting) is untouched
             pin_link = build_pin_link(out_name)
             row_title = title
             success += 1
@@ -583,11 +587,13 @@ def main():
     if len(chunks) <= 1:
         csv_path = os.path.join(OUTPUT_DIR, "pinterest_bulk_upload.csv")
         save_pinterest_bulk_csv(pinterest_rows, csv_path, pins_per_day)
+        shutil.copy2(csv_path, os.path.join(LATEST_RUN_DIR, os.path.basename(csv_path)))
         print(f"Saved Pinterest bulk-upload CSV to: {csv_path}")
     else:
         for part_num, chunk in enumerate(chunks, start=1):
             csv_path = os.path.join(OUTPUT_DIR, f"pinterest_bulk_upload_part{part_num}.csv")
             save_pinterest_bulk_csv(chunk, csv_path, pins_per_day)  # dates restart fresh for each file
+            shutil.copy2(csv_path, os.path.join(LATEST_RUN_DIR, os.path.basename(csv_path)))
             print(f"Saved Pinterest bulk-upload CSV part {part_num} ({len(chunk)} rows) to: {csv_path}")
 
     write_pin_links_to_sheet(pin_links_in_row_order)
