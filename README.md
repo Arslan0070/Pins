@@ -47,7 +47,7 @@ Two things are asked before each run starts:
 **If you run it locally** with `python pin_generator.py`: it'll just ask you both questions as plain typed prompts in the terminal, with Enter defaulting to the same values.
 
 Other details:
-- **Publish date** never leaves a gap: if a particular pin fails to generate, its row still gets a date — it just has blank Title/Media URL since there's nothing to upload for that one.
+- **Publish date** never leaves a gap: if a particular pin fails to generate, its row still gets a date — it just has blank Title/Media URL since there's nothing to upload for that one. Dates are written as `YYYY-MM-DD` (e.g. `2026-07-29`) — this is the exact format Pinterest's bulk-upload tool requires; any other format (like DD/MM/YYYY) risks Pinterest misreading days and months, especially for single-digit days.
 - **Pinterest board** defaults to `"Boredpanda Viral"` — change it with the `PINTEREST_BOARD` variable if you use a different board name.
 - **File splitting**: if there are more than 100 pins in a run, the CSV automatically splits into multiple files — `pinterest_bulk_upload_part1.csv`, `_part2.csv`, and so on (100 rows each). Each file's publish dates restart fresh from "tomorrow" — they don't continue on from the previous file. Change the 100 cutoff with the `CSV_CHUNK_SIZE` variable if needed.
 

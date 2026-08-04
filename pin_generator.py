@@ -418,7 +418,7 @@ def build_publish_dates(count: int, pins_per_day: int):
     dates = []
     for i in range(count):
         day_offset = i // pins_per_day
-        dates.append((start + timedelta(days=day_offset)).strftime("%d/%m/%Y"))
+        dates.append((start + timedelta(days=day_offset)).strftime("%Y-%m-%d"))
     return dates
 
 
