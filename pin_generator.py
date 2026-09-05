@@ -78,6 +78,7 @@ import os
 import random
 import re
 import shutil
+import subprocess
 import sys
 import unicodedata
 from datetime import date, timedelta
@@ -96,6 +97,9 @@ from PIL import Image, ImageDraw, ImageFont
 SHEET_CSV_URL = os.environ.get("SHEET_CSV_URL", "").strip()
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "pins")
 LATEST_RUN_DIR = os.environ.get("LATEST_RUN_DIR", "latest_run")
+DEFAULT_OUTPUT_FORMAT = "image"
+VIDEO_MIN_SECONDS = 10
+VIDEO_MAX_SECONDS = 25
 ARTICLE_COL = os.environ.get("ARTICLE_COL", "article_url")
 IMAGE_COL = os.environ.get("IMAGE_COL", "image_url")
 TITLE_COL = os.environ.get("TITLE_COL", "title")
@@ -150,6 +154,30 @@ COLOR_PALETTES = [
     ((238, 9, 121), (255, 106, 0)),      # hot pink -> orange
     ((30, 60, 114), (42, 82, 152)),      # navy -> steel blue
     ((252, 92, 125), (106, 130, 251)),   # rose -> periwinkle
+    ((255, 61, 127), (255, 148, 114)),   # watermelon -> salmon
+    ((0, 176, 155), (150, 201, 61)),     # emerald -> lime
+    ((41, 128, 185), (109, 213, 250)),   # ocean blue -> light blue
+    ((142, 45, 226), (74, 0, 224)),      # violet -> deep purple
+    ((255, 0, 150), (0, 204, 255)),      # neon pink -> neon blue
+    ((247, 121, 125), (255, 179, 71)),   # sunset red -> amber
+    ((44, 62, 80), (52, 152, 219)),      # midnight -> sky blue
+    ((203, 45, 62), (251, 196, 87)),     # crimson -> honey
+    ((69, 39, 160), (149, 117, 205)),    # deep violet -> lilac
+    ((255, 175, 189), (255, 195, 160)),  # blush pink -> peach pastel
+    ((22, 160, 133), (241, 196, 15)),    # jade -> yellow
+    ((192, 57, 43), (211, 84, 0)),       # brick red -> burnt orange
+    ((41, 50, 65), (100, 110, 125)),     # charcoal -> steel grey
+    ((255, 107, 107), (255, 230, 109)),  # coral red -> lemon
+    ((72, 61, 139), (123, 104, 238)),    # dark slate blue -> medium purple
+    ((0, 128, 128), (120, 210, 210)),    # teal -> pale cyan
+    ((214, 51, 132), (247, 183, 51)),    # magenta rose -> marigold
+    ((46, 49, 146), (60, 180, 210)),     # royal blue -> electric cyan
+    ((255, 65, 108), (255, 75, 43)),     # ruby -> tangerine
+    ((94, 231, 223), (150, 87, 230)),    # aqua -> purple
+    ((247, 37, 133), (114, 9, 183)),     # hot pink -> deep purple
+    ((58, 12, 163), (90, 150, 220)),     # cobalt -> sky
+    ((249, 212, 35), (255, 90, 141)),    # sunflower -> pink
+    ((11, 72, 107), (110, 165, 175)),    # deep teal -> soft cyan
 ]
 
 # ---------------------------------------------------------------------------
@@ -390,6 +418,66 @@ def get_utm_query() -> str:
     return DEFAULT_UTM_QUERY
 
 
+def get_output_format() -> str:
+    """
+    "image" or "video". Priority:
+    1) OUTPUT_FORMAT env var / workflow input, if set
+    2) an interactive typed prompt, if running in a real terminal (local run)
+    3) the default ("image")
+    """
+    env_val = os.environ.get("OUTPUT_FORMAT", "").strip().lower()
+    if env_val in ("image", "video"):
+        return env_val
+    if env_val:
+        print(f"Invalid OUTPUT_FORMAT '{env_val}', using default '{DEFAULT_OUTPUT_FORMAT}'.", file=sys.stderr)
+        return DEFAULT_OUTPUT_FORMAT
+
+    if sys.stdin.isatty():
+        raw = input(f"Output format - image or video? [{DEFAULT_OUTPUT_FORMAT}]: ").strip().lower()
+        if raw in ("image", "video"):
+            return raw
+        return DEFAULT_OUTPUT_FORMAT
+
+    return DEFAULT_OUTPUT_FORMAT
+
+
+def make_video_from_image(image_path: str, video_path: str) -> int:
+    """
+    Converts a static pin JPEG into a small MP4 (same visual, no motion) with
+    a random duration between VIDEO_MIN_SECONDS and VIDEO_MAX_SECONDS.
+    Uses a 1fps encode + '-tune stillimage' since the frame never changes,
+    which keeps the file size small without sacrificing visible quality.
+    Returns the duration (in seconds) used, for logging.
+    Raises RuntimeError if ffmpeg isn't available or the encode fails.
+    """
+    duration = random.randint(VIDEO_MIN_SECONDS, VIDEO_MAX_SECONDS)
+    cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1",
+        "-i", image_path,
+        "-t", str(duration),
+        "-r", "1",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "fast",
+        "-tune", "stillimage",
+        "-crf", "30",
+        "-movflags", "+faststart",
+        video_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {result.stderr[-500:]}")
+    return duration
+
+
+def check_ffmpeg_available():
+    if shutil.which("ffmpeg") is None:
+        print("ERROR: OUTPUT_FORMAT is 'video' but ffmpeg is not installed/available on this machine.", file=sys.stderr)
+        print("Install ffmpeg (e.g. 'sudo apt-get install ffmpeg' on Ubuntu) and try again.", file=sys.stderr)
+        sys.exit(1)
+
+
 def build_pin_link(filename: str) -> str:
     """Public raw GitHub URL for a pin file, once it's committed into the repo (requires a public repo)."""
     if not GITHUB_REPOSITORY:
@@ -418,17 +506,20 @@ def build_publish_dates(count: int, pins_per_day: int):
     dates = []
     for i in range(count):
         day_offset = i // pins_per_day
-        dates.append((start + timedelta(days=day_offset)).strftime("%d/%m/%Y"))
+        dates.append((start + timedelta(days=day_offset)).strftime("%Y-%m-%d"))
     return dates
 
 
-def save_pinterest_bulk_csv(rows, path, pins_per_day: int):
+def save_pinterest_bulk_csv(rows, path, pins_per_day: int, output_format: str = "image"):
     """
     rows: list of dicts with keys "title", "media_url", "link" - one per
     attempted row (title/media_url blank if that row's pin failed).
     Writes a CSV ready to import into Pinterest's bulk-upload tool.
+    Per Pinterest's spec, the Thumbnail column is only used for video Pins
+    and should be left blank for image Pins.
     """
     dates = build_publish_dates(len(rows), pins_per_day)
+    thumbnail_value = PINTEREST_THUMBNAIL if output_format == "video" else ""
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["Title", "Media URL", "Pinterest board", "Thumbnail", "Description", "Link", "Publish date", "Keywords"])
@@ -437,7 +528,7 @@ def save_pinterest_bulk_csv(rows, path, pins_per_day: int):
                 row.get("title", ""),
                 row.get("media_url", ""),
                 PINTEREST_BOARD,
-                PINTEREST_THUMBNAIL,
+                thumbnail_value,
                 "",
                 row.get("link", ""),
                 publish_date,
@@ -503,8 +594,13 @@ def main():
 
     pins_per_day = get_pins_per_day()
     utm_query = get_utm_query()
+    output_format = get_output_format()
     print(f"Pins per day: {pins_per_day}")
     print(f"UTM parameters: {utm_query or '(none)'}")
+    print(f"Output format: {output_format}")
+
+    if output_format == "video":
+        check_ffmpeg_available()
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(LATEST_RUN_DIR, exist_ok=True)
@@ -559,13 +655,24 @@ def main():
             else:
                 title = title_value
 
-            out_name = f"{i+1:04d}-{slugify(title)}.jpg"
-            out_path = os.path.join(OUTPUT_DIR, out_name)
+            out_name_jpg = f"{i+1:04d}-{slugify(title)}.jpg"
+            jpg_path = os.path.join(OUTPUT_DIR, out_name_jpg)
 
             img = fetch_image(image_url)
             pin = build_pin(img, title)
-            pin.save(out_path, "JPEG", quality=JPEG_QUALITY, optimize=True)
-            shutil.copy2(out_path, os.path.join(LATEST_RUN_DIR, out_name))  # copy for this run's download only - pins/ (permanent hosting) is untouched
+            pin.save(jpg_path, "JPEG", quality=JPEG_QUALITY, optimize=True)
+
+            if output_format == "video":
+                out_name = f"{i+1:04d}-{slugify(title)}.mp4"
+                final_path = os.path.join(OUTPUT_DIR, out_name)
+                duration = make_video_from_image(jpg_path, final_path)
+                os.remove(jpg_path)  # only the video is kept/hosted, the intermediate jpg isn't needed
+                print(f"       (video, {duration}s)")
+            else:
+                out_name = out_name_jpg
+                final_path = jpg_path
+
+            shutil.copy2(final_path, os.path.join(LATEST_RUN_DIR, out_name))  # copy for this run's download only - pins/ (permanent hosting) is untouched
             pin_link = build_pin_link(out_name)
             row_title = title
             success += 1
@@ -586,13 +693,13 @@ def main():
 
     if len(chunks) <= 1:
         csv_path = os.path.join(OUTPUT_DIR, "pinterest_bulk_upload.csv")
-        save_pinterest_bulk_csv(pinterest_rows, csv_path, pins_per_day)
+        save_pinterest_bulk_csv(pinterest_rows, csv_path, pins_per_day, output_format)
         shutil.copy2(csv_path, os.path.join(LATEST_RUN_DIR, os.path.basename(csv_path)))
         print(f"Saved Pinterest bulk-upload CSV to: {csv_path}")
     else:
         for part_num, chunk in enumerate(chunks, start=1):
             csv_path = os.path.join(OUTPUT_DIR, f"pinterest_bulk_upload_part{part_num}.csv")
-            save_pinterest_bulk_csv(chunk, csv_path, pins_per_day)  # dates restart fresh for each file
+            save_pinterest_bulk_csv(chunk, csv_path, pins_per_day, output_format)  # dates restart fresh for each file
             shutil.copy2(csv_path, os.path.join(LATEST_RUN_DIR, os.path.basename(csv_path)))
             print(f"Saved Pinterest bulk-upload CSV part {part_num} ({len(chunk)} rows) to: {csv_path}")
 

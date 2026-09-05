@@ -41,13 +41,16 @@ Every run automatically creates **`pinterest_bulk_upload.csv`** inside the `pins
 Two things are asked before each run starts:
 - **How many pins per day** — controls how the Publish date column is grouped (e.g. `10` means the first 10 rows get tomorrow's date, the next 10 get the day after, and so on).
 - **UTM parameters** — whatever you type gets appended to each article's link (e.g. `utm_source=arslan&utm_medium=social&utm_campaign=arslan`). Leave it blank for no UTM parameters at all.
+- **Output format: image or video** — choose **image** for the same JPEG pins as always, or **video** to get each pin as a short MP4 instead (same design, just converted to a still video). Videos get a random length between 10–25 seconds each, and are encoded to be as small as possible without visible quality loss. The Thumbnail column in the CSV is automatically filled in for videos and left blank for images, matching Pinterest's own spec.
+
+  ⚠️ **One honest caveat about video mode**: I tested it and confirmed GitHub's raw file hosting serves `.mp4` files with an incorrect content-type header (it doesn't properly label them as video). This means Pinterest *might* not recognize the video link correctly, even though the file itself is a valid video. **I'd strongly recommend testing with just 2-3 videos first** before running a full batch, to confirm Pinterest accepts them from your setup.
 
 **If you run it through GitHub Actions** (the normal way): click **Run workflow** on the Actions tab — two fields appear right there with sensible defaults already filled in, just edit them if you want something different, then click the green **Run workflow** button.
 
 **If you run it locally** with `python pin_generator.py`: it'll just ask you both questions as plain typed prompts in the terminal, with Enter defaulting to the same values.
 
 Other details:
-- **Publish date** never leaves a gap: if a particular pin fails to generate, its row still gets a date — it just has blank Title/Media URL since there's nothing to upload for that one.
+- **Publish date** never leaves a gap: if a particular pin fails to generate, its row still gets a date — it just has blank Title/Media URL since there's nothing to upload for that one. Dates are written as `YYYY-MM-DD` (e.g. `2026-07-29`) — this is the exact format Pinterest's bulk-upload tool requires; any other format (like DD/MM/YYYY) risks Pinterest misreading days and months, especially for single-digit days.
 - **Pinterest board** defaults to `"Boredpanda Viral"` — change it with the `PINTEREST_BOARD` variable if you use a different board name.
 - **File splitting**: if there are more than 100 pins in a run, the CSV automatically splits into multiple files — `pinterest_bulk_upload_part1.csv`, `_part2.csv`, and so on (100 rows each). Each file's publish dates restart fresh from "tomorrow" — they don't continue on from the previous file. Change the 100 cutoff with the `CSV_CHUNK_SIZE` variable if needed.
 
