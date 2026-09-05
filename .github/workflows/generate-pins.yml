@@ -11,6 +11,14 @@ on:
         description: "UTM parameters to append to each article link (no leading ?). Leave blank for no UTM at all."
         required: false
         default: "utm_source=arslan&utm_medium=social&utm_campaign=arslan"
+      output_format:
+        description: "Generate pins as images or as short videos"
+        required: false
+        type: choice
+        options:
+          - image
+          - video
+        default: image
 
 permissions:
   contents: write   # needed so the workflow can commit the generated pins back into the repo
@@ -33,6 +41,10 @@ jobs:
       - name: Clear this run's temporary download folder (does NOT touch pins/ - nothing hosted is ever deleted)
         run: rm -rf latest_run && mkdir -p latest_run
 
+      - name: Make sure ffmpeg is available (only needed for video output)
+        if: ${{ inputs.output_format == 'video' }}
+        run: ffmpeg -version || (sudo apt-get update -y && sudo apt-get install -y ffmpeg)
+
       - name: Generate pins
         env:
           SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
@@ -41,6 +53,7 @@ jobs:
           SHEET_ID: ${{ secrets.SHEET_ID }}
           PINS_PER_DAY: ${{ inputs.pins_per_day }}
           UTM_QUERY: ${{ inputs.utm_query }}
+          OUTPUT_FORMAT: ${{ inputs.output_format }}
         run: python pin_generator.py
 
       - name: Commit and push pins to the repo
@@ -50,11 +63,13 @@ jobs:
           git add pins/
           git diff --staged --quiet && echo "No new pins to commit." || (git commit -m "Add pins - $(date -u +'%Y-%m-%d %H:%M UTC')" && git push)
 
-      - name: Upload THIS RUN's pin images as a separate artifact
+      - name: Upload THIS RUN's pins as a separate artifact
         uses: actions/upload-artifact@v4
         with:
           name: pins-${{ github.run_id }}
-          path: latest_run/*.jpg
+          path: |
+            latest_run/*.jpg
+            latest_run/*.mp4
           retention-days: 14
 
       - name: Upload THIS RUN's Pinterest bulk-upload CSV(s) as a separate artifact
