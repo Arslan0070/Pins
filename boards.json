@@ -1,0 +1,78 @@
+{
+  "_help": "EDIT THIS FILE to match your real Pinterest boards. 'board' must be the EXACT name of a board in your Pinterest account. 'match' = words that tell the script an article belongs to this niche (plurals like dogs/cats are matched automatically). 'keywords' = SEO keywords added to the CSV Keywords column for pins in this niche. Add, remove or rename niches freely. Articles that match nothing go to default_board.",
+  "default_board": "Boredpanda Viral",
+  "niches": [
+    {
+      "name": "Animals & Pets",
+      "board": "Funny Animals & Pets",
+      "match": ["dog", "puppy", "cat", "kitten", "pet", "animal", "bird", "horse", "zoo", "wildlife", "rescue", "fox", "bear", "monkey", "raccoon", "squirrel", "owl", "duck", "goat", "cow", "pig"],
+      "keywords": ["funny animals", "cute pets", "animal photos", "pet lovers"]
+    },
+    {
+      "name": "Funny & Memes",
+      "board": "Funny Pictures & Memes",
+      "match": ["funny", "meme", "hilarious", "joke", "prank", "fail", "comedy", "humor", "humour", "lol", "silly", "relatable", "sarcastic", "roast", "dad joke"],
+      "keywords": ["funny pictures", "hilarious memes", "relatable humor", "funny fails"]
+    },
+    {
+      "name": "Relationships & Dating",
+      "board": "Relationship Stories & Advice",
+      "match": ["husband", "wife", "boyfriend", "girlfriend", "partner", "dating", "date", "wedding", "bride", "groom", "marriage", "married", "divorce", "cheating", "affair", "ex", "fiance", "in-law", "stepmom", "stepdad", "stepdaughter", "stepson", "hall pass", "breakup", "romance", "love"],
+      "keywords": ["relationship stories", "relationship advice", "dating tips", "marriage drama"]
+    },
+    {
+      "name": "Family & Parenting",
+      "board": "Parenting & Family Stories",
+      "match": ["kid", "child", "children", "mom", "dad", "mother", "father", "parent", "parenting", "baby", "toddler", "teen", "teenager", "grandma", "grandpa", "grandmother", "grandfather", "family", "sibling", "sister", "brother", "pregnant", "pregnancy", "labor", "newborn", "daughter", "son"],
+      "keywords": ["parenting stories", "family drama", "mom life", "parenting tips"]
+    },
+    {
+      "name": "Work & Career",
+      "board": "Work Life & Career Stories",
+      "match": ["boss", "coworker", "colleague", "job", "employee", "employer", "salary", "workplace", "office", "manager", "fired", "resign", "interview", "customer", "career", "work", "hr", "promotion", "retail"],
+      "keywords": ["workplace stories", "career advice", "office drama", "work humor"]
+    },
+    {
+      "name": "Food & Cooking",
+      "board": "Food & Recipes",
+      "match": ["recipe", "cooking", "cook", "chef", "restaurant", "pizza", "cake", "dinner", "baking", "bake", "meal", "food", "dessert", "snack", "breakfast", "lunch", "kitchen", "coffee"],
+      "keywords": ["food ideas", "easy recipes", "cooking tips", "food fails"]
+    },
+    {
+      "name": "Travel & Places",
+      "board": "Travel & Places",
+      "match": ["travel", "trip", "vacation", "holiday", "hotel", "airport", "flight", "airline", "tourist", "tourism", "city", "country", "beach", "island", "mountain", "road trip", "passenger"],
+      "keywords": ["travel ideas", "travel stories", "vacation fails", "places to visit"]
+    },
+    {
+      "name": "Home & DIY",
+      "board": "Home Decor & DIY",
+      "match": ["home", "house", "diy", "renovation", "apartment", "furniture", "garden", "interior", "room", "neighbor", "landlord", "decor", "decorate", "build", "builder", "repair", "cleaning"],
+      "keywords": ["home ideas", "diy projects", "home decor", "house fails"]
+    },
+    {
+      "name": "Fashion & Beauty",
+      "board": "Fashion & Beauty",
+      "match": ["fashion", "outfit", "dress", "makeup", "hair", "haircut", "tattoo", "style", "beauty", "clothes", "clothing", "wardrobe", "shoes", "nails", "skincare"],
+      "keywords": ["fashion fails", "style ideas", "beauty tips", "outfit ideas"]
+    },
+    {
+      "name": "Health & Wellness",
+      "board": "Health & Wellness",
+      "match": ["doctor", "health", "hospital", "disease", "therapy", "therapist", "diet", "fitness", "medical", "mental health", "cancer", "nurse", "symptom", "sleep", "exercise", "workout", "survivor", "diagnosis"],
+      "keywords": ["health tips", "wellness", "doctor stories", "healthy living"]
+    },
+    {
+      "name": "Celebrity & Entertainment",
+      "board": "Celebrity & Entertainment",
+      "match": ["celebrity", "actor", "actress", "movie", "film", "singer", "star", "hollywood", "tv", "series", "bio", "career highlights", "net worth", "netflix", "disney", "music", "band", "show"],
+      "keywords": ["celebrity news", "celebrity facts", "movie facts", "entertainment"]
+    },
+    {
+      "name": "Facts, History & Culture",
+      "board": "Interesting Facts & Culture",
+      "match": ["fact", "history", "historical", "culture", "american", "british", "european", "custom", "tradition", "science", "scientist", "ancient", "world", "language", "stereotype", "education", "school", "teacher", "student"],
+      "keywords": ["interesting facts", "did you know", "history facts", "culture differences"]
+    }
+  ]
+}

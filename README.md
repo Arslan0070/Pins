@@ -38,18 +38,33 @@ This link updates automatically whenever you edit the sheet, needs no login, and
 
 Every run automatically creates **`pinterest_bulk_upload.csv`** inside the `pins/` folder, formatted exactly for Pinterest's own bulk-upload tool: Title, Media URL, Pinterest board, Thumbnail, Description, Link, Publish date, Keywords.
 
-Two things are asked before each run starts:
+Four things are asked before each run starts:
 - **How many pins per day** — controls how the Publish date column is grouped (e.g. `10` means the first 10 rows get tomorrow's date, the next 10 get the day after, and so on).
 - **UTM parameters** — whatever you type gets appended to each article's link (e.g. `utm_source=arslan&utm_medium=social&utm_campaign=arslan`). Leave it blank for no UTM parameters at all.
+- **Output format: image or video** — choose **image** for the same JPEG pins as always, or **video** to get each pin as a short MP4 instead (same design, just converted to a still video). Videos get a random length between 10–25 seconds each, and are encoded to be as small as possible without visible quality loss. The Thumbnail column in the CSV is automatically filled in for videos and left blank for images, matching Pinterest's own spec.
+- **Board mode: auto or single** — **auto** picks each pin's board from its article's niche (see "Boards and keywords" below); **single** puts every pin on the one board named in `PINTEREST_BOARD` (default `Boredpanda Viral`).
 
-**If you run it through GitHub Actions** (the normal way): click **Run workflow** on the Actions tab — two fields appear right there with sensible defaults already filled in, just edit them if you want something different, then click the green **Run workflow** button.
+  ⚠️ **One honest caveat about video mode**: I tested it and confirmed GitHub's raw file hosting serves `.mp4` files with an incorrect content-type header (it doesn't properly label them as video). This means Pinterest *might* not recognize the video link correctly, even though the file itself is a valid video. **I'd strongly recommend testing with just 2-3 videos first** before running a full batch, to confirm Pinterest accepts them from your setup.
 
-**If you run it locally** with `python pin_generator.py`: it'll just ask you both questions as plain typed prompts in the terminal, with Enter defaulting to the same values.
+**If you run it through GitHub Actions** (the normal way): click **Run workflow** on the Actions tab — four fields appear right there with sensible defaults already filled in, just edit them if you want something different, then click the green **Run workflow** button.
+
+**If you run it locally** with `python pin_generator.py`: it'll just ask you the same questions as plain typed prompts in the terminal, with Enter defaulting to the same values.
 
 Other details:
-- **Publish date** never leaves a gap: if a particular pin fails to generate, its row still gets a date — it just has blank Title/Media URL since there's nothing to upload for that one. Dates are written as `YYYY-MM-DD` (e.g. `2026-07-29`) — this is the exact format Pinterest's bulk-upload tool requires; any other format (like DD/MM/YYYY) risks Pinterest misreading days and months, especially for single-digit days.
-- **Pinterest board** defaults to `"Boredpanda Viral"` — change it with the `PINTEREST_BOARD` variable if you use a different board name.
+- **Bad rows are skipped, never left blank.** If an article has no usable title or photo, its link is dead, or the page was blocked, that row is left out completely — no pin, no CSV row, and no publish date used up. So 1000 links with 3 bad ones gives you 997 pins and 997 CSV rows, with dates running continuously. The run log lists every skipped row (by its spreadsheet row number) with the reason.
+- **Publish date** is written as `YYYY-MM-DD` (e.g. `2026-07-29`) — this is the exact format Pinterest's bulk-upload tool requires; any other format (like DD/MM/YYYY) risks Pinterest misreading days and months, especially for single-digit days.
 - **File splitting**: if there are more than 100 pins in a run, the CSV automatically splits into multiple files — `pinterest_bulk_upload_part1.csv`, `_part2.csv`, and so on (100 rows each). Each file's publish dates restart fresh from "tomorrow" — they don't continue on from the previous file. Change the 100 cutoff with the `CSV_CHUNK_SIZE` variable if needed.
+
+### Boards and keywords (auto mode)
+
+For every pin the script works out the article's niche and fills in two CSV columns:
+
+- **Pinterest board** — chosen from `boards.json`. The script looks at the article's own tags/category (if the page has them), the words in the title, and the page description, and picks the niche with the most matches. If nothing matches, the pin goes to `default_board`.
+- **Keywords** — a comma-separated list for Pinterest SEO: the article's own tags first (up to 4), then 3 keywords for the niche from `boards.json`, then the meaningful words from the title — 10 at most.
+
+**Edit `boards.json` to match your real Pinterest boards.** The board names that come with it are placeholders. Each `board` value must be the **exact name of a board in your Pinterest account** — I couldn't confirm whether Pinterest creates a board for you if the name in the CSV doesn't exist, so create them first, or test with a few rows. You can rename, add or delete niches freely; a niche is just a `name`, a `board`, a list of `match` words, and a list of SEO `keywords`.
+
+The end of each run's log shows how many pins went to each board, so you can see where the matching is missing and add words to the `match` lists.
 
 It shows up in the same downloadable zip as the pin images (see step 5), and also gets committed into your repo alongside them.
 

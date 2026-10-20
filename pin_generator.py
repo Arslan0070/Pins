@@ -31,11 +31,24 @@ It also always saves "pinterest_bulk_upload.csv" next to the pins -
 formatted exactly for Pinterest's bulk-upload tool (Title, Media URL,
 Pinterest board, Thumbnail, Description, Link, Publish date, Keywords).
 
-Two things are asked before it starts (typed prompt if you run this
-locally with `python pin_generator.py`; shown as fillable fields on
-GitHub's "Run workflow" button if run through Actions):
+Board and keywords: in "auto" board mode, each pin's board is chosen from
+its article's niche (using the article's own tags/category plus words in the
+title, matched against boards.json) and the Keywords column is filled with
+related SEO keywords. Articles that match no niche use the default board in
+boards.json. In "single" mode every pin uses PINTEREST_BOARD.
+
+Bad rows are skipped, never left blank: if an article has no usable title or
+image, or its link/image can't be loaded, that row is left out completely -
+no pin, no CSV row, and no publish date is used up. (1000 links with 3 bad
+ones = 997 pins and 997 CSV rows.)
+
+Questions asked before it starts (typed prompt if you run this locally with
+`python pin_generator.py`; shown as fillable fields on GitHub's "Run workflow"
+button if run through Actions):
   - how many pins per day (controls the Publish date grouping)
   - what UTM parameters to append to each article link
+  - image or video output
+  - board mode: auto (by niche) or single (one fixed board)
 
 If there are more than CSV_CHUNK_SIZE rows (default 100), the CSV is
 split into multiple files (pinterest_bulk_upload_part1.csv, _part2.csv,
@@ -47,7 +60,7 @@ Usage:
 
 Config is controlled via environment variables (set as GitHub Actions
 secrets/vars or workflow inputs, or just export them locally). Leave
-PINS_PER_DAY / UTM_QUERY unset to be prompted for them instead:
+PINS_PER_DAY / UTM_QUERY / OUTPUT_FORMAT / BOARD_MODE unset to be prompted instead:
     SHEET_CSV_URL             - required. The published CSV link from your Google Sheet.
     OUTPUT_DIR                - optional. Defaults to "pins".
     ARTICLE_COL               - optional. Defaults to "article_url".
@@ -55,7 +68,9 @@ PINS_PER_DAY / UTM_QUERY unset to be prompted for them instead:
     TITLE_COL                 - optional. Defaults to "title".
     WATERMARK_TEXT            - optional. Defaults to "Arslan".
     JPEG_QUALITY              - optional. 1-95. Defaults to 85 (high quality, small file).
-    PINTEREST_BOARD           - optional. Defaults to "Boredpanda Viral".
+    PINTEREST_BOARD           - optional. The board used in "single" mode. Defaults to "Boredpanda Viral".
+    BOARD_MODE                - optional. "auto" or "single". If unset, you'll be prompted (default: auto).
+    BOARDS_FILE               - optional. Path to the niche/board list. Defaults to boards.json next to this script.
     PINTEREST_THUMBNAIL       - optional. Defaults to "0:00" (matches Pinterest's template).
     PINS_PER_DAY              - optional. If unset, you'll be prompted (default if not interactive: 10).
     UTM_QUERY                 - optional. If unset, you'll be prompted. Set to an empty
@@ -78,6 +93,7 @@ import os
 import random
 import re
 import shutil
+import subprocess
 import sys
 import unicodedata
 from datetime import date, timedelta
@@ -96,6 +112,9 @@ from PIL import Image, ImageDraw, ImageFont
 SHEET_CSV_URL = os.environ.get("SHEET_CSV_URL", "").strip()
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "pins")
 LATEST_RUN_DIR = os.environ.get("LATEST_RUN_DIR", "latest_run")
+DEFAULT_OUTPUT_FORMAT = "image"
+VIDEO_MIN_SECONDS = 10
+VIDEO_MAX_SECONDS = 25
 ARTICLE_COL = os.environ.get("ARTICLE_COL", "article_url")
 IMAGE_COL = os.environ.get("IMAGE_COL", "image_url")
 TITLE_COL = os.environ.get("TITLE_COL", "title")
@@ -150,6 +169,30 @@ COLOR_PALETTES = [
     ((238, 9, 121), (255, 106, 0)),      # hot pink -> orange
     ((30, 60, 114), (42, 82, 152)),      # navy -> steel blue
     ((252, 92, 125), (106, 130, 251)),   # rose -> periwinkle
+    ((255, 61, 127), (255, 148, 114)),   # watermelon -> salmon
+    ((0, 176, 155), (150, 201, 61)),     # emerald -> lime
+    ((41, 128, 185), (109, 213, 250)),   # ocean blue -> light blue
+    ((142, 45, 226), (74, 0, 224)),      # violet -> deep purple
+    ((255, 0, 150), (0, 204, 255)),      # neon pink -> neon blue
+    ((247, 121, 125), (255, 179, 71)),   # sunset red -> amber
+    ((44, 62, 80), (52, 152, 219)),      # midnight -> sky blue
+    ((203, 45, 62), (251, 196, 87)),     # crimson -> honey
+    ((69, 39, 160), (149, 117, 205)),    # deep violet -> lilac
+    ((255, 175, 189), (255, 195, 160)),  # blush pink -> peach pastel
+    ((22, 160, 133), (241, 196, 15)),    # jade -> yellow
+    ((192, 57, 43), (211, 84, 0)),       # brick red -> burnt orange
+    ((41, 50, 65), (100, 110, 125)),     # charcoal -> steel grey
+    ((255, 107, 107), (255, 230, 109)),  # coral red -> lemon
+    ((72, 61, 139), (123, 104, 238)),    # dark slate blue -> medium purple
+    ((0, 128, 128), (120, 210, 210)),    # teal -> pale cyan
+    ((214, 51, 132), (247, 183, 51)),    # magenta rose -> marigold
+    ((46, 49, 146), (60, 180, 210)),     # royal blue -> electric cyan
+    ((255, 65, 108), (255, 75, 43)),     # ruby -> tangerine
+    ((94, 231, 223), (150, 87, 230)),    # aqua -> purple
+    ((247, 37, 133), (114, 9, 183)),     # hot pink -> deep purple
+    ((58, 12, 163), (90, 150, 220)),     # cobalt -> sky
+    ((249, 212, 35), (255, 90, 141)),    # sunflower -> pink
+    ((11, 72, 107), (110, 165, 175)),    # deep teal -> soft cyan
 ]
 
 # ---------------------------------------------------------------------------
@@ -170,13 +213,60 @@ def fetch_image(url: str) -> Image.Image:
     return img
 
 
-def extract_title_and_image(article_url: str) -> Tuple[str, str]:
+# Titles that mean "this page didn't really load" (blocked / error pages) - such rows are skipped
+BAD_TITLE_STARTS = (
+    "just a moment", "access denied", "attention required", "403 forbidden", "404 not found",
+    "page not found", "not found", "forbidden", "bad gateway", "service unavailable", "too many requests",
+)
+SITE_NAME_TITLES = {"bored panda", "boredpanda"}
+# Tags that say nothing about the topic
+IGNORED_TAGS = {"bored panda", "boredpanda", "news", "article", "articles", "viral", "trending"}
+
+
+def is_usable_title(title: str) -> bool:
+    t = (title or "").strip().lower()
+    if len(t) < 3 or t == "nan" or t in SITE_NAME_TITLES:
+        return False
+    return not t.startswith(BAD_TITLE_STARTS)
+
+
+def _collect_ld_keywords(obj, out):
+    """Walks JSON-LD data looking for 'keywords' / 'articleSection' values."""
+    if isinstance(obj, dict):
+        for key in ("keywords", "articleSection"):
+            val = obj.get(key)
+            if isinstance(val, str):
+                out.extend(val.split(","))
+            elif isinstance(val, list):
+                out.extend(v for v in val if isinstance(v, str))
+        for v in obj.values():
+            if isinstance(v, (dict, list)):
+                _collect_ld_keywords(v, out)
+    elif isinstance(obj, list):
+        for v in obj:
+            _collect_ld_keywords(v, out)
+
+
+def clean_tags(raw_tags):
+    tags, seen = [], set()
+    for t in raw_tags:
+        t = re.sub(r"\s+", " ", str(t)).strip().strip("#").lower()
+        if not (3 <= len(t) <= 40) or t in IGNORED_TAGS or t in seen:
+            continue
+        seen.add(t)
+        tags.append(t)
+    return tags
+
+
+def extract_article_info(article_url: str) -> dict:
     """
-    Visit an article page and pull out its headline + main photo.
+    Visit an article page and pull out: headline, main photo, and topic hints
+    (the article's tags/category and its short description).
     Most sites (including BoredPanda) tag these with "Open Graph" meta tags
     - the same tags Facebook/Twitter use to build a preview card when you
     paste a link. We read those tags directly instead of guessing.
     Falls back to the <title> tag and the first big <img> if OG tags are missing.
+    Raises ValueError if there is no usable title or image (the caller skips that row).
     """
     resp = requests.get(article_url, timeout=20, headers=REQUEST_HEADERS)
     resp.raise_for_status()
@@ -202,10 +292,31 @@ def extract_title_and_image(article_url: str) -> Tuple[str, str]:
                 image_url = src
                 break
 
-    if not title or not image_url:
-        raise ValueError(f"Could not find title/image on page (title={bool(title)}, image={bool(image_url)})")
+    if not is_usable_title(title):
+        raise ValueError("no usable title on the page")
+    if not image_url:
+        raise ValueError("no image found on the page")
 
-    return title, image_url
+    # Topic hints: the article's own tags / category, wherever the page keeps them
+    raw_tags = []
+    for tag in soup.find_all("meta", attrs={"property": "article:tag"}):
+        raw_tags.append(tag.get("content", ""))
+    for name in ("article:section", "keywords", "news_keywords"):
+        value = meta(name)
+        if value:
+            raw_tags.extend(value.split(","))
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        try:
+            _collect_ld_keywords(json.loads(script.string or ""), raw_tags)
+        except (ValueError, TypeError):
+            pass
+
+    return {
+        "title": title.strip(),
+        "image_url": image_url,
+        "tags": clean_tags(raw_tags),
+        "description": meta("og:description", "description") or "",
+    }
 
 
 def cover_resize(img: Image.Image, width: int, height: int) -> Image.Image:
@@ -390,6 +501,184 @@ def get_utm_query() -> str:
     return DEFAULT_UTM_QUERY
 
 
+def get_output_format() -> str:
+    """
+    "image" or "video". Priority:
+    1) OUTPUT_FORMAT env var / workflow input, if set
+    2) an interactive typed prompt, if running in a real terminal (local run)
+    3) the default ("image")
+    """
+    env_val = os.environ.get("OUTPUT_FORMAT", "").strip().lower()
+    if env_val in ("image", "video"):
+        return env_val
+    if env_val:
+        print(f"Invalid OUTPUT_FORMAT '{env_val}', using default '{DEFAULT_OUTPUT_FORMAT}'.", file=sys.stderr)
+        return DEFAULT_OUTPUT_FORMAT
+
+    if sys.stdin.isatty():
+        raw = input(f"Output format - image or video? [{DEFAULT_OUTPUT_FORMAT}]: ").strip().lower()
+        if raw in ("image", "video"):
+            return raw
+        return DEFAULT_OUTPUT_FORMAT
+
+    return DEFAULT_OUTPUT_FORMAT
+
+
+def make_video_from_image(image_path: str, video_path: str) -> int:
+    """
+    Converts a static pin JPEG into a small MP4 (same visual, no motion) with
+    a random duration between VIDEO_MIN_SECONDS and VIDEO_MAX_SECONDS.
+    Uses a 1fps encode + '-tune stillimage' since the frame never changes,
+    which keeps the file size small without sacrificing visible quality.
+    Returns the duration (in seconds) used, for logging.
+    Raises RuntimeError if ffmpeg isn't available or the encode fails.
+    """
+    duration = random.randint(VIDEO_MIN_SECONDS, VIDEO_MAX_SECONDS)
+    cmd = [
+        "ffmpeg", "-y",
+        "-loop", "1",
+        "-i", image_path,
+        "-t", str(duration),
+        "-r", "1",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "fast",
+        "-tune", "stillimage",
+        "-crf", "30",
+        "-movflags", "+faststart",
+        video_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {result.stderr[-500:]}")
+    return duration
+
+
+def check_ffmpeg_available():
+    if shutil.which("ffmpeg") is None:
+        print("ERROR: OUTPUT_FORMAT is 'video' but ffmpeg is not installed/available on this machine.", file=sys.stderr)
+        print("Install ffmpeg (e.g. 'sudo apt-get install ffmpeg' on Ubuntu) and try again.", file=sys.stderr)
+        sys.exit(1)
+
+
+BOARD_MODES = ("auto", "single")
+DEFAULT_BOARD_MODE = "auto"
+BOARDS_FILE = os.environ.get("BOARDS_FILE", os.path.join(os.path.dirname(os.path.abspath(__file__)), "boards.json"))
+MAX_KEYWORDS = 10
+
+# Words that carry no topic meaning - ignored when turning a title into keywords
+STOPWORDS = set("""
+a about after again all also an and any are as at be because been before being but by can could did do does
+doing down during each few for from further had has have having he her here hers him his how i if in into is
+it its just me more most my no nor not now of off on once only or other our out over own same she should so
+some such than that the their them then there these they this those through to too under until up very was
+we were what when where which while who whom why will with would you your yours
+things thing people times time photos photo pics pic pictures picture ever best worst top like get got
+one two three four five six seven eight nine ten
+won win wins use uses used using treat treats shut mad show shows showing shown reveal reveals revealed
+say says said tell tells told take takes took make makes made give gives gave come comes came go goes went
+find finds found look looks looked want wants wanted need needs needed think thinks thought know knows knew
+try tries tried keep keeps kept let lets put puts call calls called ask asks asked turn turns turned
+real really actually totally literally even still already always never every many much lot lots
+good great bad big little new old first last next less
+around between behind without within against among across
+""".split())
+
+
+def get_board_mode() -> str:
+    """
+    "auto" (board chosen by the article's niche) or "single" (one fixed board for every pin). Priority:
+    1) BOARD_MODE env var / workflow input, if set
+    2) an interactive typed prompt, if running in a real terminal (local run)
+    3) the default ("auto")
+    """
+    env_val = os.environ.get("BOARD_MODE", "").strip().lower()
+    if env_val in BOARD_MODES:
+        return env_val
+    if env_val:
+        print(f"Invalid BOARD_MODE '{env_val}', using default '{DEFAULT_BOARD_MODE}'.", file=sys.stderr)
+        return DEFAULT_BOARD_MODE
+
+    if sys.stdin.isatty():
+        raw = input(f"Board mode - auto (by niche) or single (one fixed board)? [{DEFAULT_BOARD_MODE}]: ").strip().lower()
+        if raw in BOARD_MODES:
+            return raw
+        return DEFAULT_BOARD_MODE
+
+    return DEFAULT_BOARD_MODE
+
+
+def _word_pattern(word: str):
+    # whole-word match that also accepts a simple plural (dog -> dogs, box -> boxes)
+    return re.compile(r"(?<![a-z0-9])" + re.escape(word.lower()) + r"(?:s|es)?(?![a-z0-9])")
+
+
+def load_boards_config(path: str = BOARDS_FILE) -> dict:
+    """Reads boards.json. If it's missing or broken, falls back to the single default board so a run never crashes."""
+    fallback = {"default_board": PINTEREST_BOARD, "niches": []}
+    try:
+        with open(path, encoding="utf-8") as f:
+            config = json.load(f)
+    except (OSError, ValueError) as e:
+        print(f"WARNING: could not read {path} ({e}). Every pin will use the board '{PINTEREST_BOARD}'.", file=sys.stderr)
+        return fallback
+
+    niches = []
+    for niche in config.get("niches", []):
+        if not niche.get("board") or not niche.get("match"):
+            continue
+        niche["_patterns"] = [_word_pattern(w) for w in niche["match"]]
+        niches.append(niche)
+    return {"default_board": config.get("default_board") or PINTEREST_BOARD, "niches": niches}
+
+
+def pick_niche(config: dict, title: str, tags, description: str):
+    """
+    Returns the best-matching niche dict, or None if nothing matches.
+    Each different match-word found scores 2 points if it appears in the title or the
+    article's tags/category, and 1 point if it only appears in the description.
+    """
+    strong_text = " ".join([title] + list(tags)).lower()
+    weak_text = (description or "").lower()
+    best, best_score = None, 0
+    for niche in config["niches"]:
+        score = 0
+        for pattern in niche["_patterns"]:
+            if pattern.search(strong_text):
+                score += 2
+            elif pattern.search(weak_text):
+                score += 1
+        if score > best_score:  # on a tie the niche listed first in boards.json wins
+            best, best_score = niche, score
+    return best
+
+
+def build_keywords(title: str, tags, niche, max_keywords: int = MAX_KEYWORDS) -> str:
+    """
+    Comma-separated SEO keywords for the CSV Keywords column:
+    up to 4 of the article's own tags, then up to 3 niche keywords from boards.json,
+    then the meaningful words from the title, up to max_keywords in total.
+    """
+    keywords, seen = [], set()
+
+    def add(word):
+        word = word.strip().lower()
+        if word and word not in seen and len(keywords) < max_keywords:
+            seen.add(word)
+            keywords.append(word)
+
+    for tag in list(tags)[:4]:
+        add(tag)
+    if niche:
+        for kw in niche.get("keywords", [])[:3]:
+            add(kw)
+    for token in re.findall(r"[a-z0-9']+", title.lower()):
+        token = re.sub(r"'s$", "", token).strip("'")
+        if len(token) >= 3 and token not in STOPWORDS and not token.isdigit():
+            add(token)
+    return ",".join(keywords)
+
+
 def build_pin_link(filename: str) -> str:
     """Public raw GitHub URL for a pin file, once it's committed into the repo (requires a public repo)."""
     if not GITHUB_REPOSITORY:
@@ -411,8 +700,8 @@ def build_publish_dates(count: int, pins_per_day: int):
     """
     One date string per row, in Pinterest's DD/MM/YYYY format. Starts
     PUBLISH_START_OFFSET_DAYS days from today, and advances by one day
-    every `pins_per_day` rows - counting every row (even ones whose pin
-    failed), so the schedule never skips or leaves a gap.
+    every `pins_per_day` rows. Only successfully created pins are passed in,
+    so the schedule never skips or leaves a gap.
     """
     start = date.today() + timedelta(days=PUBLISH_START_OFFSET_DAYS)
     dates = []
@@ -422,13 +711,16 @@ def build_publish_dates(count: int, pins_per_day: int):
     return dates
 
 
-def save_pinterest_bulk_csv(rows, path, pins_per_day: int):
+def save_pinterest_bulk_csv(rows, path, pins_per_day: int, output_format: str = "image"):
     """
-    rows: list of dicts with keys "title", "media_url", "link" - one per
-    attempted row (title/media_url blank if that row's pin failed).
+    rows: list of dicts with keys "title", "media_url", "link", "board", "keywords" -
+    one per successfully created pin (rows that failed are never included).
     Writes a CSV ready to import into Pinterest's bulk-upload tool.
+    Per Pinterest's spec, the Thumbnail column is only used for video Pins
+    and should be left blank for image Pins.
     """
     dates = build_publish_dates(len(rows), pins_per_day)
+    thumbnail_value = PINTEREST_THUMBNAIL if output_format == "video" else ""
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["Title", "Media URL", "Pinterest board", "Thumbnail", "Description", "Link", "Publish date", "Keywords"])
@@ -436,12 +728,12 @@ def save_pinterest_bulk_csv(rows, path, pins_per_day: int):
             writer.writerow([
                 row.get("title", ""),
                 row.get("media_url", ""),
-                PINTEREST_BOARD,
-                PINTEREST_THUMBNAIL,
+                row.get("board") or PINTEREST_BOARD,
+                thumbnail_value,
                 "",
                 row.get("link", ""),
                 publish_date,
-                "",
+                row.get("keywords", ""),
             ])
     return path
 
@@ -503,8 +795,17 @@ def main():
 
     pins_per_day = get_pins_per_day()
     utm_query = get_utm_query()
+    output_format = get_output_format()
+    board_mode = get_board_mode()
     print(f"Pins per day: {pins_per_day}")
     print(f"UTM parameters: {utm_query or '(none)'}")
+    print(f"Output format: {output_format}")
+    print(f"Board mode: {board_mode}")
+
+    boards_config = load_boards_config() if board_mode == "auto" else None
+
+    if output_format == "video":
+        check_ffmpeg_available()
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(LATEST_RUN_DIR, exist_ok=True)
@@ -531,53 +832,100 @@ def main():
     mode_name = "article-link" if use_article_mode else "direct image+title"
     print(f"Mode: {mode_name}")
 
-    success, failed = 0, 0
-    pinterest_rows = []           # one entry per attempted row - for the Pinterest bulk-upload CSV
-    pin_links_in_row_order = []   # one entry per EVERY sheet row (including blanks) - for the optional Sheets write-back
+    success = 0
+    skipped = []                  # (sheet row number, reason) for every row that did not become a pin
+    pinterest_rows = []           # one entry per SUCCESSFUL pin only - for the Pinterest bulk-upload CSV
+    pin_links_in_row_order = []   # one entry per EVERY sheet row (blank if skipped) - for the optional Sheets write-back
+    board_counts = {}
 
     for i, row in df.iterrows():
         pin_link = ""
-        row_title = ""
-        row_article_link = ""
+        created_files = []   # files this attempt created in pins/ (cleaned up if the attempt fails part-way)
 
         if use_article_mode:
             article_url = str(row.get(article_col, "")).strip()
             if not article_url or article_url.lower() == "nan":
                 pin_links_in_row_order.append(pin_link)
-                continue  # nothing in this row at all - skip entirely, don't count it
+                continue  # nothing in this row at all - ignore it quietly
             row_article_link = add_utm_params(article_url, utm_query)
         else:
             image_url = str(row.get(image_col, "")).strip()
             title_value = str(row.get(title_col, "")).strip()
+            row_article_link = ""
             if not image_url or image_url.lower() == "nan":
                 pin_links_in_row_order.append(pin_link)
                 continue
 
         try:
             if use_article_mode:
-                title, image_url = extract_title_and_image(article_url)
+                info = extract_article_info(article_url)
+                title, image_url, tags, description = info["title"], info["image_url"], info["tags"], info["description"]
             else:
-                title = title_value
+                if not is_usable_title(title_value):
+                    raise ValueError("title is empty")
+                title, tags, description = title_value, [], ""
 
-            out_name = f"{i+1:04d}-{slugify(title)}.jpg"
-            out_path = os.path.join(OUTPUT_DIR, out_name)
+            out_name_jpg = f"{i+1:04d}-{slugify(title)}.jpg"
+            jpg_path = os.path.join(OUTPUT_DIR, out_name_jpg)
 
             img = fetch_image(image_url)
             pin = build_pin(img, title)
-            pin.save(out_path, "JPEG", quality=JPEG_QUALITY, optimize=True)
-            shutil.copy2(out_path, os.path.join(LATEST_RUN_DIR, out_name))  # copy for this run's download only - pins/ (permanent hosting) is untouched
-            pin_link = build_pin_link(out_name)
-            row_title = title
-            success += 1
-            print(f"[OK]   {out_name}")
-        except Exception as e:
-            failed += 1
-            print(f"[FAIL] row {i+1}: {e}", file=sys.stderr)
+            if not os.path.exists(jpg_path):
+                created_files.append(jpg_path)
+            pin.save(jpg_path, "JPEG", quality=JPEG_QUALITY, optimize=True)
 
-        pinterest_rows.append({"title": row_title, "media_url": pin_link, "link": row_article_link})
+            if output_format == "video":
+                out_name = f"{i+1:04d}-{slugify(title)}.mp4"
+                final_path = os.path.join(OUTPUT_DIR, out_name)
+                if not os.path.exists(final_path):
+                    created_files.append(final_path)
+                duration = make_video_from_image(jpg_path, final_path)
+                os.remove(jpg_path)  # only the video is kept/hosted, the intermediate jpg isn't needed
+                print(f"       (video, {duration}s)")
+            else:
+                out_name = out_name_jpg
+                final_path = jpg_path
+
+            # Board + keywords for the CSV
+            niche = pick_niche(boards_config, title, tags, description) if boards_config else None
+            if boards_config:
+                board = niche["board"] if niche else boards_config["default_board"]
+            else:
+                board = PINTEREST_BOARD
+            keywords = build_keywords(title, tags, niche)
+
+            shutil.copy2(final_path, os.path.join(LATEST_RUN_DIR, out_name))  # copy for this run's download only - pins/ (permanent hosting) is untouched
+            pin_link = build_pin_link(out_name)
+            pinterest_rows.append({
+                "title": title,
+                "media_url": pin_link,
+                "link": row_article_link,
+                "board": board,
+                "keywords": keywords,
+            })
+            board_counts[board] = board_counts.get(board, 0) + 1
+            success += 1
+            print(f"[OK]   {out_name}  -> board: {board}")
+        except Exception as e:
+            # Skip this row completely: no pin, no CSV row, no date used up
+            for path in created_files:
+                if os.path.exists(path):
+                    os.remove(path)  # only files this attempt created - nothing already hosted is ever touched
+            pin_link = ""
+            skipped.append((i + 2, str(e)[:120]))  # +2 = spreadsheet row number (row 1 is the header)
+            print(f"[SKIP] sheet row {i+2}: {e}", file=sys.stderr)
+
         pin_links_in_row_order.append(pin_link)
 
-    print(f"\nDone. {success} pins created, {failed} failed. Output: {OUTPUT_DIR}/")
+    print(f"\nDone. {success} pins created, {len(skipped)} rows skipped. Output: {OUTPUT_DIR}/")
+    if board_counts:
+        print("Pins per board:")
+        for board_name, count in sorted(board_counts.items(), key=lambda kv: -kv[1]):
+            print(f"  {count:>4}  {board_name}")
+    if skipped:
+        print(f"Skipped rows (sheet row number: reason) - first {min(len(skipped), 40)} of {len(skipped)}:")
+        for row_number, reason in skipped[:40]:
+            print(f"  row {row_number}: {reason}")
 
     if pinterest_rows:
         chunks = [pinterest_rows[i:i + CSV_CHUNK_SIZE] for i in range(0, len(pinterest_rows), CSV_CHUNK_SIZE)]
@@ -586,13 +934,13 @@ def main():
 
     if len(chunks) <= 1:
         csv_path = os.path.join(OUTPUT_DIR, "pinterest_bulk_upload.csv")
-        save_pinterest_bulk_csv(pinterest_rows, csv_path, pins_per_day)
+        save_pinterest_bulk_csv(pinterest_rows, csv_path, pins_per_day, output_format)
         shutil.copy2(csv_path, os.path.join(LATEST_RUN_DIR, os.path.basename(csv_path)))
         print(f"Saved Pinterest bulk-upload CSV to: {csv_path}")
     else:
         for part_num, chunk in enumerate(chunks, start=1):
             csv_path = os.path.join(OUTPUT_DIR, f"pinterest_bulk_upload_part{part_num}.csv")
-            save_pinterest_bulk_csv(chunk, csv_path, pins_per_day)  # dates restart fresh for each file
+            save_pinterest_bulk_csv(chunk, csv_path, pins_per_day, output_format)  # dates restart fresh for each file
             shutil.copy2(csv_path, os.path.join(LATEST_RUN_DIR, os.path.basename(csv_path)))
             print(f"Saved Pinterest bulk-upload CSV part {part_num} ({len(chunk)} rows) to: {csv_path}")
 
