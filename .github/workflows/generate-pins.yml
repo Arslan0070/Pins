@@ -19,6 +19,17 @@ on:
           - image
           - video
         default: image
+      design_template:
+        description: "Which design template to use (random is strongly recommended to avoid spam filters)"
+        required: false
+        type: choice
+        options:
+          - random
+          - classic-split
+          - editorial
+          - cinematic-blur
+          - news-frame
+        default: random
       board_mode:
         description: "Pinterest board: auto = pick the board by each article's niche (see boards.json), single = same board for every pin"
         required: false
@@ -27,6 +38,10 @@ on:
           - auto
           - single
         default: auto
+      workers:
+        description: "Speed: how many articles to process at the same time (1-16, default 6). If many rows get skipped with 403/429 errors, lower it (e.g. 3)."
+        required: false
+        default: "6"
 
 permissions:
   contents: write   # needed so the workflow can commit the generated pins back into the repo
@@ -62,7 +77,9 @@ jobs:
           PINS_PER_DAY: ${{ inputs.pins_per_day }}
           UTM_QUERY: ${{ inputs.utm_query }}
           OUTPUT_FORMAT: ${{ inputs.output_format }}
+          DESIGN_TEMPLATE: ${{ inputs.design_template }}
           BOARD_MODE: ${{ inputs.board_mode }}
+          WORKERS: ${{ inputs.workers }}
         run: python pin_generator.py
 
       - name: Commit and push pins to the repo
