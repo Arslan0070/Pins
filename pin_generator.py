@@ -493,7 +493,23 @@ def add_watermark(canvas: Image.Image, text: str) -> Image.Image:
     return Image.alpha_composite(canvas, overlay).convert("RGB")
 
 
-from PIL import ImageFilter
+from PIL import ImageFilter, ImageColor
+
+def add_rounded_corners(im: Image.Image, rad: int) -> Image.Image:
+    """Applies smooth rounded corners to an image, returning an RGBA image."""
+    mask = Image.new('L', im.size, 0)
+    draw = ImageDraw.Draw(mask)
+    draw.rounded_rectangle((0, 0, im.width, im.height), rad, fill=255)
+    out = im.convert("RGBA")
+    out.putalpha(mask)
+    return out
+
+def draw_pro_text(draw, x, y, text, font, fill_color):
+    """Draws text with a subtle, premium drop shadow to lift it off the background."""
+    shadow_col = (0, 0, 0, 80)
+    # Subtle bottom-right shadow
+    draw.text((x+3, y+3), text, font=font, fill=shadow_col)
+    draw.text((x, y), text, font=font, fill=fill_color)
 
 def smart_contain(img: Image.Image, max_w: int, max_h: int) -> Image.Image:
     """Scales image down to fit completely inside max_w x max_h without cropping."""
@@ -507,7 +523,14 @@ def build_classic_split(image: Image.Image, title: str, start_rgb, end_rgb, text
     photo = cover_resize(image, PIN_WIDTH, IMAGE_HEIGHT)
     canvas.paste(photo, (0, 0))
     canvas.paste(photo, (0, IMAGE_HEIGHT + TITLE_BAND_HEIGHT))
+    
     gradient = make_gradient(PIN_WIDTH, TITLE_BAND_HEIGHT, start_rgb, end_rgb)
+    
+    # PRO TOUCH: Drop shadow on the middle band so it hovers over the images
+    band_shadow = Image.new("RGBA", (PIN_WIDTH, TITLE_BAND_HEIGHT + 60), (0,0,0,120))
+    band_shadow_blur = band_shadow.filter(ImageFilter.GaussianBlur(20))
+    canvas.paste(band_shadow_blur, (0, IMAGE_HEIGHT - 30), band_shadow_blur)
+    
     canvas.paste(gradient, (0, IMAGE_HEIGHT))
 
     draw = ImageDraw.Draw(canvas)
@@ -521,7 +544,7 @@ def build_classic_split(image: Image.Image, title: str, start_rgb, end_rgb, text
     for line, lh in zip(lines, line_heights):
         bbox = draw.textbbox((0, 0), line, font=font)
         x = (PIN_WIDTH - (bbox[2] - bbox[0])) // 2
-        draw.text((x, y), line, font=font, fill=text_color)
+        draw_pro_text(draw, x, y, line, font, text_color)
         y += lh + line_gap
     return canvas
 
@@ -534,54 +557,70 @@ def build_editorial(image: Image.Image, title: str, start_rgb, end_rgb, text_col
     
     gradient = make_gradient(PIN_WIDTH, bottom_h, start_rgb, end_rgb)
     canvas.paste(gradient, (0, top_h))
+    
+    # PRO TOUCH: Fade the image seamlessly into the solid block
+    fade_height = 250
+    fade = Image.new("RGBA", (PIN_WIDTH, fade_height), (0,0,0,0))
+    draw_f = ImageDraw.Draw(fade)
+    for y in range(fade_height):
+        alpha = int(255 * (y / fade_height))
+        draw_f.line([(0, y), (PIN_WIDTH, y)], fill=(start_rgb[0], start_rgb[1], start_rgb[2], alpha))
+    canvas.paste(fade, (0, top_h - fade_height), fade)
 
     draw = ImageDraw.Draw(canvas)
     max_text_width = PIN_WIDTH - 2 * SIDE_PADDING
-    max_text_height = bottom_h - 60
-    font, lines, line_heights, line_gap = fit_font_and_wrap(draw, title, max_text_width, max_text_height, font_path)
+    font, lines, line_heights, line_gap = fit_font_and_wrap(draw, title, max_text_width, bottom_h - 60, font_path)
 
     total_h = sum(line_heights) + line_gap * (len(lines) - 1)
-    y = top_h + (bottom_h - total_h) // 2
+    y = top_h + (bottom_h - total_h) // 2 + 10
 
     for line, lh in zip(lines, line_heights):
         bbox = draw.textbbox((0, 0), line, font=font)
         x = (PIN_WIDTH - (bbox[2] - bbox[0])) // 2
-        draw.text((x, y), line, font=font, fill=text_color)
+        draw_pro_text(draw, x, y, line, font, text_color)
         y += lh + line_gap
     return canvas
 
 def build_cinematic_blur(image: Image.Image, title: str, start_rgb, end_rgb, text_color, font_path) -> Image.Image:
     canvas = Image.new("RGB", (PIN_WIDTH, PIN_HEIGHT), "black")
     bg = cover_resize(image, PIN_WIDTH, PIN_HEIGHT)
-    bg = bg.filter(ImageFilter.GaussianBlur(40))
+    bg = bg.filter(ImageFilter.GaussianBlur(60)) # Heavy, smooth blur
     canvas.paste(bg, (0, 0))
 
-    safe_h = PIN_HEIGHT - 350
-    foreground = smart_contain(image, PIN_WIDTH - 60, safe_h)
+    safe_h = PIN_HEIGHT - 450
+    # Center the uncropped image
+    foreground = smart_contain(image, PIN_WIDTH - 100, safe_h)
+    foreground = add_rounded_corners(foreground, 35) # Premium rounded corners
     fg_x = (PIN_WIDTH - foreground.width) // 2
-    fg_y = (safe_h - foreground.height) // 2 + 50
+    fg_y = 120
     
-    # Optional drop shadow could go here, keeping simple for speed
-    canvas.paste(foreground, (fg_x, fg_y))
+    # PRO TOUCH: Thick, soft drop shadow behind the image
+    shadow = Image.new("RGBA", (foreground.width, foreground.height), (0, 0, 0, 160))
+    shadow = add_rounded_corners(shadow, 35)
+    shadow_blur = shadow.filter(ImageFilter.GaussianBlur(25))
+    canvas.paste(shadow_blur, (fg_x, fg_y + 15), shadow_blur)
+    canvas.paste(foreground, (fg_x, fg_y), foreground)
     
-    # Title band at bottom
-    band_h = 300
-    gradient = make_gradient(PIN_WIDTH, band_h, (20,20,20), (20,20,20)) # Dark transparent look
-    canvas.paste(gradient, (0, PIN_HEIGHT - band_h))
+    # PRO TOUCH: Dark gradient overlay at the bottom so text is highly readable
+    overlay = Image.new("RGBA", (PIN_WIDTH, PIN_HEIGHT), (0,0,0,0))
+    draw_ov = ImageDraw.Draw(overlay)
+    fade_start = PIN_HEIGHT - 600
+    for y in range(fade_start, PIN_HEIGHT):
+        alpha = int(245 * ((y - fade_start) / 600))
+        draw_ov.line([(0, y), (PIN_WIDTH, y)], fill=(15, 15, 15, alpha))
+    canvas.paste(overlay, (0,0), overlay)
     
     draw = ImageDraw.Draw(canvas)
     max_text_width = PIN_WIDTH - 2 * SIDE_PADDING
-    max_text_height = band_h - 40
-    font, lines, line_heights, line_gap = fit_font_and_wrap(draw, title, max_text_width, max_text_height, font_path)
-
+    font, lines, line_heights, line_gap = fit_font_and_wrap(draw, title, max_text_width, 400, font_path)
     total_h = sum(line_heights) + line_gap * (len(lines) - 1)
-    y = (PIN_HEIGHT - band_h) + (band_h - total_h) // 2
-
+    
+    y_text = PIN_HEIGHT - total_h - 100
     for line, lh in zip(lines, line_heights):
         bbox = draw.textbbox((0, 0), line, font=font)
         x = (PIN_WIDTH - (bbox[2] - bbox[0])) // 2
-        draw.text((x, y), line, font=font, fill=(255,255,255))
-        y += lh + line_gap
+        draw_pro_text(draw, x, y_text, line, font, (255, 255, 255))
+        y_text += lh + line_gap
     return canvas
 
 def build_news_frame(image: Image.Image, title: str, start_rgb, end_rgb, text_color, font_path) -> Image.Image:
@@ -589,62 +628,62 @@ def build_news_frame(image: Image.Image, title: str, start_rgb, end_rgb, text_co
     gradient = make_gradient(PIN_WIDTH, PIN_HEIGHT, start_rgb, end_rgb)
     canvas.paste(gradient, (0, 0))
 
-    fg = smart_contain(image, 900, 900)
+    fg = smart_contain(image, 860, 860)
+    fg = add_rounded_corners(fg, 40)
     fg_x = (PIN_WIDTH - fg.width) // 2
     fg_y = (PIN_HEIGHT - fg.height) // 2
-    canvas.paste(fg, (fg_x, fg_y))
     
-    # Title split top and bottom
+    # PRO TOUCH: Outer glow / drop shadow on the center image
+    shadow = Image.new("RGBA", (fg.width, fg.height), (0, 0, 0, 140))
+    shadow = add_rounded_corners(shadow, 40)
+    shadow_blur = shadow.filter(ImageFilter.GaussianBlur(30))
+    canvas.paste(shadow_blur, (fg_x, fg_y + 10), shadow_blur)
+    canvas.paste(fg, (fg_x, fg_y), fg)
+    
     draw = ImageDraw.Draw(canvas)
     words = title.split()
     mid = len(words) // 2
     title_top = " ".join(words[:mid])
     title_bottom = " ".join(words[mid:])
     
-    # Top text
     if title_top:
-        font_t, lines_t, lh_t, gap_t = fit_font_and_wrap(draw, title_top, 900, fg_y - 40, font_path)
+        font_t, lines_t, lh_t, gap_t = fit_font_and_wrap(draw, title_top, 900, fg_y - 60, font_path)
         tot_t = sum(lh_t) + gap_t * (len(lines_t) - 1)
         y_top = (fg_y - tot_t) // 2
         for line, lh in zip(lines_t, lh_t):
             bbox = draw.textbbox((0, 0), line, font=font_t)
             x = (PIN_WIDTH - (bbox[2] - bbox[0])) // 2
-            draw.text((x, y_top), line, font=font_t, fill=text_color)
+            draw_pro_text(draw, x, y_top, line, font_t, text_color)
             y_top += lh + gap_t
 
-    # Bottom text
     if title_bottom:
         bottom_space = PIN_HEIGHT - (fg_y + fg.height)
-        font_b, lines_b, lh_b, gap_b = fit_font_and_wrap(draw, title_bottom, 900, bottom_space - 60, font_path)
+        font_b, lines_b, lh_b, gap_b = fit_font_and_wrap(draw, title_bottom, 900, bottom_space - 80, font_path)
         tot_b = sum(lh_b) + gap_b * (len(lines_b) - 1)
         y_bot = fg_y + fg.height + (bottom_space - tot_b) // 2
         for line, lh in zip(lines_b, lh_b):
             bbox = draw.textbbox((0, 0), line, font=font_b)
             x = (PIN_WIDTH - (bbox[2] - bbox[0])) // 2
-            draw.text((x, y_bot), line, font=font_b, fill=text_color)
+            draw_pro_text(draw, x, y_bot, line, font_b, text_color)
             y_bot += lh + gap_b
             
     return canvas
 
 def build_pin(image: Image.Image, title: str, template: str = "random") -> Image.Image:
-    # Intelligent Aspect Ratio Routing
     src_w, src_h = image.size
     is_landscape = src_w > src_h
     
-    # Define template pools
     safe_for_landscapes = ["cinematic-blur", "news-frame"]
     all_templates = ["classic-split", "editorial", "cinematic-blur", "news-frame"]
     
-    # Route template
     if template == "random":
         if is_landscape:
             chosen = random.choice(safe_for_landscapes)
         else:
             chosen = random.choice(all_templates)
     else:
-        # If a specific template is forced, check if it's safe. If forcing a crop on a landscape, override it to be safe (optional, but smart).
         if is_landscape and template in ["classic-split", "editorial"]:
-            chosen = random.choice(safe_for_landscapes) # Auto-protect memes even if classic is selected
+            chosen = random.choice(safe_for_landscapes)
         else:
             chosen = template
 
