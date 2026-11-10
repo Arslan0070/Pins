@@ -120,6 +120,7 @@ SHEET_CSV_URL = os.environ.get("SHEET_CSV_URL", "").strip()
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "pins")
 LATEST_RUN_DIR = os.environ.get("LATEST_RUN_DIR", "latest_run")
 DEFAULT_OUTPUT_FORMAT = "image"
+DESIGN_TEMPLATE = os.environ.get("DESIGN_TEMPLATE", "random").strip().lower()
 VIDEO_MIN_SECONDS = 10
 VIDEO_MAX_SECONDS = 25
 ARTICLE_COL = os.environ.get("ARTICLE_COL", "article_url")
@@ -492,36 +493,176 @@ def add_watermark(canvas: Image.Image, text: str) -> Image.Image:
     return Image.alpha_composite(canvas, overlay).convert("RGB")
 
 
-def build_pin(image: Image.Image, title: str) -> Image.Image:
-    canvas = Image.new("RGB", (PIN_WIDTH, PIN_HEIGHT), "white")
+from PIL import ImageFilter
 
+def smart_contain(img: Image.Image, max_w: int, max_h: int) -> Image.Image:
+    """Scales image down to fit completely inside max_w x max_h without cropping."""
+    src_w, src_h = img.size
+    ratio = min(max_w / src_w, max_h / src_h)
+    new_w, new_h = max(1, int(src_w * ratio)), max(1, int(src_h * ratio))
+    return img.resize((new_w, new_h), Image.LANCZOS)
+
+def build_classic_split(image: Image.Image, title: str, start_rgb, end_rgb, text_color, font_path) -> Image.Image:
+    canvas = Image.new("RGB", (PIN_WIDTH, PIN_HEIGHT), "white")
     photo = cover_resize(image, PIN_WIDTH, IMAGE_HEIGHT)
     canvas.paste(photo, (0, 0))
     canvas.paste(photo, (0, IMAGE_HEIGHT + TITLE_BAND_HEIGHT))
-
-    start_rgb, end_rgb = random.choice(COLOR_PALETTES)
-    text_color = pick_text_color(start_rgb, end_rgb)
-
     gradient = make_gradient(PIN_WIDTH, TITLE_BAND_HEIGHT, start_rgb, end_rgb)
     canvas.paste(gradient, (0, IMAGE_HEIGHT))
 
     draw = ImageDraw.Draw(canvas)
     max_text_width = PIN_WIDTH - 2 * SIDE_PADDING
     max_text_height = TITLE_BAND_HEIGHT - 60
-    font, lines, line_heights, line_gap = fit_font_and_wrap(draw, title, max_text_width, max_text_height, FONT_PATH)
+    font, lines, line_heights, line_gap = fit_font_and_wrap(draw, title, max_text_width, max_text_height, font_path)
 
     total_h = sum(line_heights) + line_gap * (len(lines) - 1)
     y = IMAGE_HEIGHT + (TITLE_BAND_HEIGHT - total_h) // 2
 
     for line, lh in zip(lines, line_heights):
         bbox = draw.textbbox((0, 0), line, font=font)
-        w = bbox[2] - bbox[0]
-        x = (PIN_WIDTH - w) // 2
+        x = (PIN_WIDTH - (bbox[2] - bbox[0])) // 2
         draw.text((x, y), line, font=font, fill=text_color)
         y += lh + line_gap
-
-    canvas = add_watermark(canvas, WATERMARK_TEXT)
     return canvas
+
+def build_editorial(image: Image.Image, title: str, start_rgb, end_rgb, text_color, font_path) -> Image.Image:
+    canvas = Image.new("RGB", (PIN_WIDTH, PIN_HEIGHT), "white")
+    top_h = 1000
+    bottom_h = PIN_HEIGHT - top_h
+    photo = cover_resize(image, PIN_WIDTH, top_h)
+    canvas.paste(photo, (0, 0))
+    
+    gradient = make_gradient(PIN_WIDTH, bottom_h, start_rgb, end_rgb)
+    canvas.paste(gradient, (0, top_h))
+
+    draw = ImageDraw.Draw(canvas)
+    max_text_width = PIN_WIDTH - 2 * SIDE_PADDING
+    max_text_height = bottom_h - 60
+    font, lines, line_heights, line_gap = fit_font_and_wrap(draw, title, max_text_width, max_text_height, font_path)
+
+    total_h = sum(line_heights) + line_gap * (len(lines) - 1)
+    y = top_h + (bottom_h - total_h) // 2
+
+    for line, lh in zip(lines, line_heights):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        x = (PIN_WIDTH - (bbox[2] - bbox[0])) // 2
+        draw.text((x, y), line, font=font, fill=text_color)
+        y += lh + line_gap
+    return canvas
+
+def build_cinematic_blur(image: Image.Image, title: str, start_rgb, end_rgb, text_color, font_path) -> Image.Image:
+    canvas = Image.new("RGB", (PIN_WIDTH, PIN_HEIGHT), "black")
+    bg = cover_resize(image, PIN_WIDTH, PIN_HEIGHT)
+    bg = bg.filter(ImageFilter.GaussianBlur(40))
+    canvas.paste(bg, (0, 0))
+
+    safe_h = PIN_HEIGHT - 350
+    foreground = smart_contain(image, PIN_WIDTH - 60, safe_h)
+    fg_x = (PIN_WIDTH - foreground.width) // 2
+    fg_y = (safe_h - foreground.height) // 2 + 50
+    
+    # Optional drop shadow could go here, keeping simple for speed
+    canvas.paste(foreground, (fg_x, fg_y))
+    
+    # Title band at bottom
+    band_h = 300
+    gradient = make_gradient(PIN_WIDTH, band_h, (20,20,20), (20,20,20)) # Dark transparent look
+    canvas.paste(gradient, (0, PIN_HEIGHT - band_h))
+    
+    draw = ImageDraw.Draw(canvas)
+    max_text_width = PIN_WIDTH - 2 * SIDE_PADDING
+    max_text_height = band_h - 40
+    font, lines, line_heights, line_gap = fit_font_and_wrap(draw, title, max_text_width, max_text_height, font_path)
+
+    total_h = sum(line_heights) + line_gap * (len(lines) - 1)
+    y = (PIN_HEIGHT - band_h) + (band_h - total_h) // 2
+
+    for line, lh in zip(lines, line_heights):
+        bbox = draw.textbbox((0, 0), line, font=font)
+        x = (PIN_WIDTH - (bbox[2] - bbox[0])) // 2
+        draw.text((x, y), line, font=font, fill=(255,255,255))
+        y += lh + line_gap
+    return canvas
+
+def build_news_frame(image: Image.Image, title: str, start_rgb, end_rgb, text_color, font_path) -> Image.Image:
+    canvas = Image.new("RGB", (PIN_WIDTH, PIN_HEIGHT), "white")
+    gradient = make_gradient(PIN_WIDTH, PIN_HEIGHT, start_rgb, end_rgb)
+    canvas.paste(gradient, (0, 0))
+
+    fg = smart_contain(image, 900, 900)
+    fg_x = (PIN_WIDTH - fg.width) // 2
+    fg_y = (PIN_HEIGHT - fg.height) // 2
+    canvas.paste(fg, (fg_x, fg_y))
+    
+    # Title split top and bottom
+    draw = ImageDraw.Draw(canvas)
+    words = title.split()
+    mid = len(words) // 2
+    title_top = " ".join(words[:mid])
+    title_bottom = " ".join(words[mid:])
+    
+    # Top text
+    if title_top:
+        font_t, lines_t, lh_t, gap_t = fit_font_and_wrap(draw, title_top, 900, fg_y - 40, font_path)
+        tot_t = sum(lh_t) + gap_t * (len(lines_t) - 1)
+        y_top = (fg_y - tot_t) // 2
+        for line, lh in zip(lines_t, lh_t):
+            bbox = draw.textbbox((0, 0), line, font=font_t)
+            x = (PIN_WIDTH - (bbox[2] - bbox[0])) // 2
+            draw.text((x, y_top), line, font=font_t, fill=text_color)
+            y_top += lh + gap_t
+
+    # Bottom text
+    if title_bottom:
+        bottom_space = PIN_HEIGHT - (fg_y + fg.height)
+        font_b, lines_b, lh_b, gap_b = fit_font_and_wrap(draw, title_bottom, 900, bottom_space - 60, font_path)
+        tot_b = sum(lh_b) + gap_b * (len(lines_b) - 1)
+        y_bot = fg_y + fg.height + (bottom_space - tot_b) // 2
+        for line, lh in zip(lines_b, lh_b):
+            bbox = draw.textbbox((0, 0), line, font=font_b)
+            x = (PIN_WIDTH - (bbox[2] - bbox[0])) // 2
+            draw.text((x, y_bot), line, font=font_b, fill=text_color)
+            y_bot += lh + gap_b
+            
+    return canvas
+
+def build_pin(image: Image.Image, title: str, template: str = "random") -> Image.Image:
+    # Intelligent Aspect Ratio Routing
+    src_w, src_h = image.size
+    is_landscape = src_w > src_h
+    
+    # Define template pools
+    safe_for_landscapes = ["cinematic-blur", "news-frame"]
+    all_templates = ["classic-split", "editorial", "cinematic-blur", "news-frame"]
+    
+    # Route template
+    if template == "random":
+        if is_landscape:
+            chosen = random.choice(safe_for_landscapes)
+        else:
+            chosen = random.choice(all_templates)
+    else:
+        # If a specific template is forced, check if it's safe. If forcing a crop on a landscape, override it to be safe (optional, but smart).
+        if is_landscape and template in ["classic-split", "editorial"]:
+            chosen = random.choice(safe_for_landscapes) # Auto-protect memes even if classic is selected
+        else:
+            chosen = template
+
+    start_rgb, end_rgb = random.choice(COLOR_PALETTES)
+    text_color = pick_text_color(start_rgb, end_rgb)
+    
+    if chosen == "classic-split":
+        canvas = build_classic_split(image, title, start_rgb, end_rgb, text_color, FONT_PATH)
+    elif chosen == "editorial":
+        canvas = build_editorial(image, title, start_rgb, end_rgb, text_color, FONT_PATH)
+    elif chosen == "cinematic-blur":
+        canvas = build_cinematic_blur(image, title, start_rgb, end_rgb, text_color, FONT_PATH)
+    elif chosen == "news-frame":
+        canvas = build_news_frame(image, title, start_rgb, end_rgb, text_color, FONT_PATH)
+    else:
+        canvas = build_classic_split(image, title, start_rgb, end_rgb, text_color, FONT_PATH)
+
+    return add_watermark(canvas, WATERMARK_TEXT)
 
 
 def get_pins_per_day() -> int:
@@ -768,16 +909,24 @@ def add_utm_params(url: str, utm_query: str) -> str:
 
 def build_publish_dates(count: int, pins_per_day: int):
     """
-    One date string per row, in Pinterest's DD/MM/YYYY format. Starts
-    PUBLISH_START_OFFSET_DAYS days from today, and advances by one day
-    every `pins_per_day` rows. Only successfully created pins are passed in,
-    so the schedule never skips or leaves a gap.
+    One date/time string per row. Starts PUBLISH_START_OFFSET_DAYS days from today, 
+    and advances by one day every `pins_per_day` rows.
+    Adds a random time between 07:00 and 22:00 to stagger uploads and avoid spam filters.
     """
     start = date.today() + timedelta(days=PUBLISH_START_OFFSET_DAYS)
     dates = []
     for i in range(count):
         day_offset = i // pins_per_day
-        dates.append((start + timedelta(days=day_offset)).strftime("%Y-%m-%d"))
+        base_date = start + timedelta(days=day_offset)
+        
+        # Pick a random hour (7 AM to 10 PM) and random minute
+        h = random.randint(7, 22)
+        m = random.randint(0, 59)
+        s = random.randint(0, 59)
+        
+        # Format: YYYY-MM-DD HH:MM:SS
+        dt_str = f"{base_date.strftime('%Y-%m-%d')} {h:02d}:{m:02d}:{s:02d}"
+        dates.append(dt_str)
     return dates
 
 
@@ -889,7 +1038,7 @@ def process_row(i, row, ctx) -> dict:
         jpg_path = os.path.join(OUTPUT_DIR, out_name_jpg)
 
         img = fetch_image(image_url)
-        pin = build_pin(img, title)
+        pin = build_pin(img, title, template=ctx.get("design_template", "random"))
         if not os.path.exists(jpg_path):
             created_files.append(jpg_path)
         pin.save(jpg_path, "JPEG", quality=JPEG_QUALITY, optimize=True)
@@ -998,6 +1147,7 @@ def main():
         "title_col": title_col,
         "utm_query": utm_query,
         "output_format": output_format,
+        "design_template": DESIGN_TEMPLATE,
         "boards_config": boards_config,
     }
 
