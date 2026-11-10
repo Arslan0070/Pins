@@ -587,12 +587,12 @@ def build_cinematic_blur(image: Image.Image, title: str, start_rgb, end_rgb, tex
     bg = bg.filter(ImageFilter.GaussianBlur(60)) # Heavy, smooth blur
     canvas.paste(bg, (0, 0))
 
-    safe_h = PIN_HEIGHT - 450
-    # Center the uncropped image
-    foreground = smart_contain(image, PIN_WIDTH - 100, safe_h)
+    # Push the foreground image slightly higher up (max height 750) to leave massive room for large bold text below
+    safe_h = 750
+    foreground = smart_contain(image, PIN_WIDTH - 80, safe_h)
     foreground = add_rounded_corners(foreground, 35) # Premium rounded corners
     fg_x = (PIN_WIDTH - foreground.width) // 2
-    fg_y = 120
+    fg_y = 60 # Closer to top
     
     # PRO TOUCH: Thick, soft drop shadow behind the image
     shadow = Image.new("RGBA", (foreground.width, foreground.height), (0, 0, 0, 160))
@@ -601,21 +601,24 @@ def build_cinematic_blur(image: Image.Image, title: str, start_rgb, end_rgb, tex
     canvas.paste(shadow_blur, (fg_x, fg_y + 15), shadow_blur)
     canvas.paste(foreground, (fg_x, fg_y), foreground)
     
-    # PRO TOUCH: Dark gradient overlay at the bottom so text is highly readable
+    # PRO TOUCH: Dark gradient overlay starting right below the image so text fills the lower half completely
     overlay = Image.new("RGBA", (PIN_WIDTH, PIN_HEIGHT), (0,0,0,0))
     draw_ov = ImageDraw.Draw(overlay)
-    fade_start = PIN_HEIGHT - 600
+    fade_start = fg_y + foreground.height - 20
     for y in range(fade_start, PIN_HEIGHT):
-        alpha = int(245 * ((y - fade_start) / 600))
+        alpha = int(245 * ((y - fade_start) / (PIN_HEIGHT - fade_start)))
         draw_ov.line([(0, y), (PIN_WIDTH, y)], fill=(15, 15, 15, alpha))
     canvas.paste(overlay, (0,0), overlay)
     
     draw = ImageDraw.Draw(canvas)
     max_text_width = PIN_WIDTH - 2 * SIDE_PADDING
-    font, lines, line_heights, line_gap = fit_font_and_wrap(draw, title, max_text_width, 400, font_path)
+    available_text_height = PIN_HEIGHT - (fg_y + foreground.height) - 40
+    
+    # Allow larger font sizes to fill the vacant space nicely
+    font, lines, line_heights, line_gap = fit_font_and_wrap(draw, title, max_text_width, available_text_height, font_path)
     total_h = sum(line_heights) + line_gap * (len(lines) - 1)
     
-    y_text = PIN_HEIGHT - total_h - 100
+    y_text = (fg_y + foreground.height) + ((PIN_HEIGHT - (fg_y + foreground.height)) - total_h) // 2
     for line, lh in zip(lines, line_heights):
         bbox = draw.textbbox((0, 0), line, font=font)
         x = (PIN_WIDTH - (bbox[2] - bbox[0])) // 2
