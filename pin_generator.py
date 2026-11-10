@@ -12,7 +12,8 @@ def main():
     start_time = time.time()
     config = load_config()
     
-    output_dir = Path('generated_pins')
+    # Save directly into 'latest_run' folder as expected by your GitHub workflow
+    output_dir = Path('latest_run')
     output_dir.mkdir(parents=True, exist_ok=True)
     
     font_path = 'assets/Poppins-Bold.ttf'
@@ -43,7 +44,7 @@ def main():
             draw.text((50, 100), title, fill=(0, 0, 0), font=font_title)
             
             pin_id = pin_data.get('id', str(index))
-            output_path = Path(output_dir) / f"{pin_id}.png"
+            output_path = output_dir / f"{pin_id}.png"
             image.save(output_path, 'PNG', optimize=True)
             
             results.append({
@@ -55,7 +56,8 @@ def main():
         except Exception as e:
             print(f"Error on pin {index}: {e}")
             
-    csv_path = Path('generated_pins') / 'pins_report.csv'
+    # Name the CSV file pinterest_bulk_upload.csv to match your workflow search path: latest_run/pinterest_bulk_upload*.csv
+    csv_path = output_dir / 'pinterest_bulk_upload.csv'
     with open(csv_path, mode='w', newline='', encoding='utf-8') as csv_file:
         fieldnames = ['id', 'title', 'filename', 'status']
         writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
